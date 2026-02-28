@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shannon"
+version = "0.1.0"
+description = "LLM-powered autonomous assistant"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.39.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0",
+    "discord.py>=2.3.0",
+    "structlog>=23.2.0",
+    "aiosqlite>=0.19.0",
+    "tiktoken>=0.5.0",
+    "click>=8.1.0",
+    "croniter>=1.4.0",
+]
+
+[project.scripts]
+shannon = "shannon.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["shannon*"]
