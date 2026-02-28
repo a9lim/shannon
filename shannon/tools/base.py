@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from shannon.core.auth import PermissionLevel
+
 
 @dataclass
 class ToolResult:
@@ -31,12 +33,15 @@ class BaseTool(ABC):
         ...
 
     @property
-    def required_permission(self) -> int:
+    def required_permission(self) -> PermissionLevel:
         """Minimum permission level (default: trusted)."""
-        return 1
+        return PermissionLevel.TRUSTED
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> ToolResult: ...
+
+    async def cleanup(self) -> None:
+        """Clean up resources. Override if needed."""
 
     def to_anthropic_schema(self) -> dict[str, Any]:
         """Convert to Anthropic tool format."""

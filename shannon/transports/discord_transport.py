@@ -10,6 +10,7 @@ import discord
 from shannon.config import ChunkerConfig, DiscordConfig
 from shannon.core.bus import EventBus, EventType, Event, MessageIncoming, MessageOutgoing
 from shannon.core.chunker import chunk_message
+from shannon.models import IncomingMessage, OutgoingMessage
 from shannon.transports.base import Transport
 from shannon.utils.logging import get_logger
 
@@ -73,18 +74,18 @@ class DiscordTransport(Transport):
                 for a in message.attachments
             ]
 
-            event = MessageIncoming(data={
-                "platform": "discord",
-                "channel": str(message.channel.id),
-                "user_id": str(message.author.id),
-                "user_name": message.author.display_name,
-                "content": content,
-                "attachments": attachments,
-                "message_id": str(message.id),
-                "guild_id": str(message.guild.id) if message.guild else None,
-            })
+            msg = IncomingMessage(
+                platform="discord",
+                channel=str(message.channel.id),
+                user_id=str(message.author.id),
+                user_name=message.author.display_name,
+                content=content,
+                attachments=attachments,
+                message_id=str(message.id),
+                guild_id=str(message.guild.id) if message.guild else None,
+            )
 
-            await self.bus.publish(event)
+            await self.bus.publish(MessageIncoming(message=msg))
 
     async def start(self) -> None:
         self.bus.subscribe(EventType.MESSAGE_OUTGOING, self._handle_outgoing)
@@ -99,14 +100,15 @@ class DiscordTransport(Transport):
         log.info("discord_transport_stopped")
 
     async def _handle_outgoing(self, event: Event) -> None:
-        if event.data.get("platform") != "discord":
+        msg: OutgoingMessage | None = event.message  # type: ignore[attr-defined]
+        if msg is None or msg.platform != "discord":
             return
 
-        channel_id = int(event.data["channel"])
-        content = event.data.get("content", "")
-        reply_to = event.data.get("reply_to")
-        embed_data = event.data.get("embed")
-        files = event.data.get("files", [])
+        channel_id = int(msg.channel)
+        content = msg.content
+        reply_to = msg.reply_to
+        embed_data = msg.embed
+        files = msg.files or []
 
         channel = self._client.get_channel(channel_id)
         if channel is None:

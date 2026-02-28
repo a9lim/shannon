@@ -6,6 +6,7 @@ import asyncio
 import re
 from typing import Any
 
+from shannon.core.auth import PermissionLevel
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 from shannon.utils.platform import get_default_shell, get_platform
@@ -61,8 +62,8 @@ class ShellTool(BaseTool):
         }
 
     @property
-    def required_permission(self) -> int:
-        return 2  # operator
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.OPERATOR
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         command: str = kwargs["command"]

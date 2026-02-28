@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from shannon.config import BrowserConfig
+from shannon.core.auth import PermissionLevel
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 
@@ -69,8 +70,8 @@ class BrowserTool(BaseTool):
         }
 
     @property
-    def required_permission(self) -> int:
-        return 1  # trusted
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.TRUSTED
 
     async def _ensure_initialized(self) -> None:
         if self._initialized:

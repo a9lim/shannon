@@ -3,6 +3,7 @@
 import asyncio
 import pytest
 from shannon.core.bus import EventBus, EventType, Event, MessageIncoming, MessageOutgoing
+from shannon.models import IncomingMessage, OutgoingMessage
 
 
 @pytest.fixture
@@ -20,14 +21,15 @@ class TestEventBus:
         bus.subscribe(EventType.MESSAGE_INCOMING, handler)
         await bus.start()
 
-        event = MessageIncoming(data={"platform": "test", "content": "hello"})
+        msg = IncomingMessage(platform="test", channel="ch", user_id="u", content="hello")
+        event = MessageIncoming(message=msg)
         await bus.publish(event)
 
         # Give consumer time to process
         await asyncio.sleep(0.1)
 
         assert len(received) == 1
-        assert received[0].data["content"] == "hello"
+        assert received[0].message.content == "hello"
         assert received[0].type == EventType.MESSAGE_INCOMING
 
         await bus.stop()
@@ -46,7 +48,8 @@ class TestEventBus:
         bus.subscribe(EventType.MESSAGE_INCOMING, handler_b)
         await bus.start()
 
-        await bus.publish(MessageIncoming(data={"content": "test"}))
+        msg = IncomingMessage(platform="test", channel="ch", user_id="u", content="test")
+        await bus.publish(MessageIncoming(message=msg))
         await asyncio.sleep(0.1)
 
         assert len(received_a) == 1
@@ -68,14 +71,16 @@ class TestEventBus:
         bus.subscribe(EventType.MESSAGE_OUTGOING, on_outgoing)
         await bus.start()
 
-        await bus.publish(MessageIncoming(data={"content": "in"}))
-        await bus.publish(MessageOutgoing(data={"content": "out"}))
+        in_msg = IncomingMessage(platform="test", channel="ch", user_id="u", content="in")
+        out_msg = OutgoingMessage(platform="test", channel="ch", content="out")
+        await bus.publish(MessageIncoming(message=in_msg))
+        await bus.publish(MessageOutgoing(message=out_msg))
         await asyncio.sleep(0.1)
 
         assert len(incoming) == 1
         assert len(outgoing) == 1
-        assert incoming[0].data["content"] == "in"
-        assert outgoing[0].data["content"] == "out"
+        assert incoming[0].message.content == "in"
+        assert outgoing[0].message.content == "out"
 
         await bus.stop()
 
@@ -92,7 +97,8 @@ class TestEventBus:
         bus.subscribe(EventType.MESSAGE_INCOMING, good_handler)
         await bus.start()
 
-        await bus.publish(MessageIncoming(data={"content": "test"}))
+        msg = IncomingMessage(platform="test", channel="ch", user_id="u", content="test")
+        await bus.publish(MessageIncoming(message=msg))
         await asyncio.sleep(0.1)
 
         # Good handler should still receive the event
@@ -101,7 +107,8 @@ class TestEventBus:
         await bus.stop()
 
     async def test_event_has_id_and_timestamp(self):
-        event = MessageIncoming(data={"content": "test"})
+        msg = IncomingMessage(platform="test", channel="ch", user_id="u", content="test")
+        event = MessageIncoming(message=msg)
         assert event.id  # non-empty
         assert event.timestamp is not None
 
@@ -118,7 +125,8 @@ class TestEventBus:
 
         # Publish more events than queue size
         for i in range(5):
-            await bus.publish(MessageIncoming(data={"i": i}))
+            msg = IncomingMessage(platform="test", channel="ch", user_id="u", content=str(i))
+            await bus.publish(MessageIncoming(message=msg))
 
         await asyncio.sleep(0.1)
         await bus.stop()

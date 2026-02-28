@@ -21,10 +21,7 @@ log = get_logger(__name__)
 class EventType(str, Enum):
     MESSAGE_INCOMING = "message.incoming"
     MESSAGE_OUTGOING = "message.outgoing"
-    TOOL_REQUEST = "tool.request"
-    TOOL_RESULT = "tool.result"
     SCHEDULER_TRIGGER = "scheduler.trigger"
-    AUTH_CHECK = "auth.check"
 
 
 @dataclass
@@ -38,25 +35,17 @@ class Event:
 @dataclass
 class MessageIncoming(Event):
     type: EventType = field(default=EventType.MESSAGE_INCOMING, init=False)
-    # data keys: platform, channel, user_id, user_name, content, attachments
+
+    # Typed payload — populated by transports, consumed by pipeline
+    message: "IncomingMessage | None" = field(default=None)
 
 
 @dataclass
 class MessageOutgoing(Event):
     type: EventType = field(default=EventType.MESSAGE_OUTGOING, init=False)
-    # data keys: platform, channel, content, reply_to, embeds, files
 
-
-@dataclass
-class ToolRequest(Event):
-    type: EventType = field(default=EventType.TOOL_REQUEST, init=False)
-    # data keys: tool_name, arguments, request_id
-
-
-@dataclass
-class ToolResult(Event):
-    type: EventType = field(default=EventType.TOOL_RESULT, init=False)
-    # data keys: tool_name, request_id, success, output, error
+    # Typed payload — populated by pipeline, consumed by transports
+    message: "OutgoingMessage | None" = field(default=None)
 
 
 @dataclass
@@ -65,10 +54,8 @@ class SchedulerTrigger(Event):
     # data keys: job_id, job_name, cron_expr
 
 
-@dataclass
-class AuthCheck(Event):
-    type: EventType = field(default=EventType.AUTH_CHECK, init=False)
-    # data keys: platform, user_id, required_level
+# Deferred import to avoid circular dependency at module level
+from shannon.models import IncomingMessage, OutgoingMessage  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +82,7 @@ class EventBus:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                await log.awarning(
+                log.warning(
                     "event_queue_full",
                     event_type=event.type.value,
                     handler=handler.__qualname__,
@@ -122,7 +109,7 @@ class EventBus:
             try:
                 await handler(event)
             except Exception:
-                await log.aexception("handler_error", event_type=event_type)
+                log.exception("handler_error", event_type=event_type)
 
     async def stop(self) -> None:
         self._running = False

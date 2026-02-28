@@ -77,7 +77,7 @@ class ContextManager:
         await self._db.commit()
 
     async def get_context(
-        self, platform: str, channel: str, user_id: str
+        self, platform: str, channel: str
     ) -> list[LLMMessage]:
         """Get recent conversation history as LLM messages."""
         assert self._db is not None

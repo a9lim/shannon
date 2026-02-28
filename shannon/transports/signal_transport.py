@@ -11,6 +11,7 @@ import httpx
 from shannon.config import ChunkerConfig, SignalConfig
 from shannon.core.bus import Event, EventBus, EventType, MessageIncoming, MessageOutgoing
 from shannon.core.chunker import chunk_message
+from shannon.models import IncomingMessage, OutgoingMessage
 from shannon.transports.base import Transport
 from shannon.utils.logging import get_logger
 
@@ -67,6 +68,41 @@ class SignalTransport(Transport):
         log.info("signal_transport_stopped")
 
     # ------------------------------------------------------------------
+    # Shared envelope parsing (DRY)
+    # ------------------------------------------------------------------
+
+    def _parse_envelope(self, envelope: dict[str, Any]) -> IncomingMessage | None:
+        """Parse a signal-cli envelope into an IncomingMessage, or None if not a data message."""
+        env = envelope.get("envelope", envelope)
+        data_msg = env.get("dataMessage")
+        if not data_msg:
+            return None
+
+        sender = env.get("source", env.get("sourceNumber", ""))
+        content = data_msg.get("message", "")
+        group_info = data_msg.get("groupInfo")
+        group_id = group_info.get("groupId", "") if group_info else ""
+
+        if not content:
+            return None
+
+        attachments = [
+            {"filename": a.get("filename", ""), "contentType": a.get("contentType", "")}
+            for a in data_msg.get("attachments", [])
+        ]
+
+        channel = group_id if group_id else sender
+        return IncomingMessage(
+            platform="signal",
+            channel=channel,
+            user_id=sender,
+            user_name=sender,
+            content=content,
+            attachments=attachments,
+            group_id=group_id,
+        )
+
+    # ------------------------------------------------------------------
     # signal-cli subprocess mode
     # ------------------------------------------------------------------
 
@@ -89,7 +125,9 @@ class SignalTransport(Transport):
                         continue
                     try:
                         envelope = json.loads(decoded)
-                        await self._process_cli_envelope(envelope)
+                        msg = self._parse_envelope(envelope)
+                        if msg:
+                            await self.bus.publish(MessageIncoming(message=msg))
                     except json.JSONDecodeError:
                         log.debug("signal_cli_parse_error", line=decoded[:200])
 
@@ -100,37 +138,6 @@ class SignalTransport(Transport):
             except Exception:
                 log.exception("signal_cli_poll_error")
                 await asyncio.sleep(5)
-
-    async def _process_cli_envelope(self, envelope: dict[str, Any]) -> None:
-        env = envelope.get("envelope", envelope)
-        data_msg = env.get("dataMessage")
-        if not data_msg:
-            return
-
-        sender = env.get("source", env.get("sourceNumber", ""))
-        content = data_msg.get("message", "")
-        group_info = data_msg.get("groupInfo")
-        group_id = group_info.get("groupId", "") if group_info else ""
-
-        if not content:
-            return
-
-        attachments = [
-            {"filename": a.get("filename", ""), "contentType": a.get("contentType", "")}
-            for a in data_msg.get("attachments", [])
-        ]
-
-        channel = group_id if group_id else sender
-        event = MessageIncoming(data={
-            "platform": "signal",
-            "channel": channel,
-            "user_id": sender,
-            "user_name": sender,
-            "content": content,
-            "attachments": attachments,
-            "group_id": group_id,
-        })
-        await self.bus.publish(event)
 
     async def _send_signal_cli(
         self, recipient: str, message: str, group_id: str = ""
@@ -168,7 +175,9 @@ class SignalTransport(Transport):
                 if resp.status_code == 200:
                     messages = resp.json()
                     for msg_envelope in messages:
-                        await self._process_rest_envelope(msg_envelope)
+                        msg = self._parse_envelope(msg_envelope)
+                        if msg:
+                            await self.bus.publish(MessageIncoming(message=msg))
             except httpx.ConnectError:
                 log.warning("signal_rest_api_unavailable")
                 await asyncio.sleep(10)
@@ -177,37 +186,6 @@ class SignalTransport(Transport):
                 await asyncio.sleep(5)
             else:
                 await asyncio.sleep(1)
-
-    async def _process_rest_envelope(self, envelope: dict[str, Any]) -> None:
-        env = envelope.get("envelope", envelope)
-        data_msg = env.get("dataMessage")
-        if not data_msg:
-            return
-
-        sender = env.get("source", env.get("sourceNumber", ""))
-        content = data_msg.get("message", "")
-        group_info = data_msg.get("groupInfo")
-        group_id = group_info.get("groupId", "") if group_info else ""
-
-        if not content:
-            return
-
-        attachments = [
-            {"filename": a.get("filename", ""), "contentType": a.get("contentType", "")}
-            for a in data_msg.get("attachments", [])
-        ]
-
-        channel = group_id if group_id else sender
-        event = MessageIncoming(data={
-            "platform": "signal",
-            "channel": channel,
-            "user_id": sender,
-            "user_name": sender,
-            "content": content,
-            "attachments": attachments,
-            "group_id": group_id,
-        })
-        await self.bus.publish(event)
 
     async def _send_rest_api(
         self, recipient: str, message: str, group_id: str = ""
@@ -264,10 +242,7 @@ class SignalTransport(Transport):
                 await asyncio.sleep(min(delay, 3.0))
 
     async def _handle_outgoing(self, event: Event) -> None:
-        if event.data.get("platform") != "signal":
+        msg: OutgoingMessage | None = event.message  # type: ignore[attr-defined]
+        if msg is None or msg.platform != "signal":
             return
-
-        channel = event.data["channel"]
-        content = event.data.get("content", "")
-
-        await self.send_message(channel, content)
+        await self.send_message(msg.channel, msg.content)

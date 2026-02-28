@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shannon.config import InteractiveConfig
+from shannon.core.auth import PermissionLevel
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 
@@ -80,8 +81,8 @@ class InteractiveTool(BaseTool):
         }
 
     @property
-    def required_permission(self) -> int:
-        return 2  # operator
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.OPERATOR
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         action = kwargs.get("action", "")

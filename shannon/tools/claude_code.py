@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any
 
+from shannon.core.auth import PermissionLevel
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 
@@ -48,8 +49,8 @@ class ClaudeCodeTool(BaseTool):
         }
 
     @property
-    def required_permission(self) -> int:
-        return 2  # operator
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.OPERATOR
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         task: str = kwargs["task"]
