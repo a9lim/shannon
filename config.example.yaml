@@ -2,27 +2,33 @@
 # Copy to ~/.shannon/config.yaml or set SHANNON_CONFIG env var
 
 llm:
-  provider: anthropic
+  provider: anthropic          # "anthropic" or "local"
   model: claude-sonnet-4-20250514
-  api_key: ""  # or set SHANNON_LLM__API_KEY env var
+  api_key: ""                  # or set SHANNON_LLM__API_KEY env var
+  local_endpoint: "http://localhost:11434/v1"  # for local provider (ollama, llama.cpp, vllm)
   max_tokens: 4096
   temperature: 0.7
+  max_context_tokens: 100000
 
 discord:
-  token: ""  # or set SHANNON_DISCORD__TOKEN env var
-  guild_ids: []  # empty = all guilds
+  token: ""                    # or set SHANNON_DISCORD__TOKEN env var
+  guild_ids: []                # empty = all guilds
   command_prefix: "!"
 
-# signal:
-#   phone_number: ""
-#   signal_cli_path: ""
+signal:
+  phone_number: ""             # Shannon's registered Signal number
+  signal_cli_path: "signal-cli"
+  rest_api_url: ""             # e.g. "http://localhost:8080" for signal-cli-rest-api
+  mode: "cli"                  # "cli" or "rest"
 
 auth:
   # Format: "platform:user_id" or bare "user_id" (applies to all platforms)
   admin_users: []
   operator_users: []
   trusted_users: []
-  default_level: 0  # 0=public, 1=trusted, 2=operator, 3=admin
+  default_level: 0             # 0=public, 1=trusted, 2=operator, 3=admin
+  rate_limit_per_minute: 30
+  sudo_timeout_seconds: 300
 
 scheduler:
   heartbeat_interval: 30
@@ -32,7 +38,19 @@ chunker:
   discord_limit: 1900
   signal_limit: 2000
   typing_delay: 0.5
+  typing_delay_ms_per_char: 50
   min_chunk_size: 100
+
+browser:
+  headless: true
+  browser: "chromium"          # "chromium", "firefox", or "webkit"
+  max_tabs: 5
+  default_timeout: 30000
+
+interactive:
+  max_sessions: 5
+  idle_timeout: 600
+  max_output_size: 10000
 
 log_level: INFO
 log_json: false

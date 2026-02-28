@@ -14,9 +14,10 @@ from shannon.utils.platform import get_config_dir, get_data_dir
 
 
 class LLMConfig(BaseModel):
-    provider: str = "anthropic"
+    provider: str = "anthropic"  # "anthropic" | "local"
     model: str = "claude-sonnet-4-20250514"
     api_key: str = ""
+    local_endpoint: str = "http://localhost:11434/v1"  # OpenAI-compatible endpoint
     max_tokens: int = 4096
     temperature: float = 0.7
     max_context_tokens: int = 100_000
@@ -30,9 +31,10 @@ class DiscordConfig(BaseModel):
 
 
 class SignalConfig(BaseModel):
-    """Signal transport config — present but unused until later phase."""
     phone_number: str = ""
-    signal_cli_path: str = ""
+    signal_cli_path: str = "signal-cli"
+    rest_api_url: str = ""  # e.g. "http://localhost:8080"
+    mode: str = "cli"  # "cli" | "rest"
     data_dir: str = ""
 
 
@@ -41,6 +43,8 @@ class AuthConfig(BaseModel):
     operator_users: list[str] = Field(default_factory=list)
     trusted_users: list[str] = Field(default_factory=list)
     default_level: int = 0  # public
+    rate_limit_per_minute: int = 30
+    sudo_timeout_seconds: int = 300
 
 
 class SchedulerConfig(BaseModel):
@@ -53,7 +57,22 @@ class ChunkerConfig(BaseModel):
     discord_limit: int = 1900
     signal_limit: int = 2000
     typing_delay: float = 0.5
+    typing_delay_ms_per_char: int = 50
     min_chunk_size: int = 100
+
+
+class BrowserConfig(BaseModel):
+    headless: bool = True
+    browser: str = "chromium"  # "chromium" | "firefox" | "webkit"
+    max_tabs: int = 5
+    default_timeout: int = 30000  # ms
+    user_data_dir: str = ""
+
+
+class InteractiveConfig(BaseModel):
+    max_sessions: int = 5
+    idle_timeout: int = 600  # seconds
+    max_output_size: int = 10000  # chars
 
 
 class Settings(BaseSettings):
@@ -69,6 +88,8 @@ class Settings(BaseSettings):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    interactive: InteractiveConfig = Field(default_factory=InteractiveConfig)
     data_dir: str = ""
     log_level: str = "INFO"
     log_json: bool = False

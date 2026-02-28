@@ -12,14 +12,17 @@ import click
 from shannon.config import Settings, load_settings
 from shannon.core.auth import AuthManager, PermissionLevel
 from shannon.core.bus import Event, EventBus, EventType, MessageOutgoing
-from shannon.core.chunker import chunk_message
 from shannon.core.context import ContextManager
-from shannon.core.llm import AnthropicProvider, LLMMessage, LLMResponse
+from shannon.core.llm import LLMMessage, LLMResponse, create_provider
 from shannon.core.scheduler import Scheduler
 from shannon.core.system_prompt import build_system_prompt
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.tools.shell import ShellTool
+from shannon.tools.browser import BrowserTool
+from shannon.tools.claude_code import ClaudeCodeTool
+from shannon.tools.interactive import InteractiveTool
 from shannon.transports.discord_transport import DiscordTransport
+from shannon.transports.signal_transport import SignalTransport
 from shannon.utils.logging import get_logger, setup_logging
 
 log = get_logger(__name__)
@@ -35,7 +38,7 @@ class Shannon:
         # Core components
         self.bus = EventBus()
         self.auth = AuthManager(settings.auth)
-        self.llm = AnthropicProvider(settings.llm)
+        self.llm = create_provider(settings.llm)
         self.context = ContextManager(
             db_path=settings.get_data_dir() / "context.db",
             llm=self.llm,
@@ -43,15 +46,20 @@ class Shannon:
         )
         self.scheduler = Scheduler(settings.scheduler, self.bus, settings.get_data_dir())
 
-        # Tools
-        self.tools: list[BaseTool] = [ShellTool()]
+        # Tools — registered eagerly but initialized lazily where possible
+        self.tools: list[BaseTool] = [
+            ShellTool(),
+            BrowserTool(settings.browser),
+            ClaudeCodeTool(),
+            InteractiveTool(settings.interactive),
+        ]
         self._tool_map: dict[str, BaseTool] = {t.name: t for t in self.tools}
 
         # Transports
         self.transports: list[Any] = []
 
     async def start(self) -> None:
-        log.info("shannon_starting", version="0.1.0")
+        log.info("shannon_starting", version="0.1.0", provider=self.settings.llm.provider)
 
         # Initialize context DB
         await self.context.start()
@@ -63,10 +71,18 @@ class Shannon:
         if self.settings.scheduler.enabled:
             await self.scheduler.start()
 
-        # Start transports
+        # Start Discord transport if configured
         if self.settings.discord.token:
             transport = DiscordTransport(
                 self.settings.discord, self.bus, self.settings.chunker
+            )
+            self.transports.append(transport)
+            await transport.start()
+
+        # Start Signal transport if configured
+        if self.settings.signal.phone_number:
+            transport = SignalTransport(
+                self.settings.signal, self.bus, self.settings.chunker
             )
             self.transports.append(transport)
             await transport.start()
@@ -83,6 +99,16 @@ class Shannon:
             await transport.stop()
         await self.scheduler.stop()
         await self.context.stop()
+        await self.llm.close()
+
+        # Clean up tools with cleanup methods
+        for tool in self.tools:
+            if hasattr(tool, "cleanup"):
+                try:
+                    await tool.cleanup()
+                except Exception:
+                    log.exception("tool_cleanup_error", tool=tool.name)
+
         log.info("shannon_stopped")
 
     async def _handle_message(self, event: Event) -> None:
@@ -94,6 +120,11 @@ class Shannon:
         content = data["content"]
 
         log.info("message_received", platform=platform, user=user_name, channel=channel)
+
+        # Rate limit check
+        if not self.auth.check_rate_limit(platform, user_id):
+            await self._send(platform, channel, "You're sending messages too quickly. Please slow down.")
+            return
 
         # Handle slash commands
         if content.startswith("/"):
@@ -115,11 +146,10 @@ class Shannon:
         # Load conversation context
         messages = await self.context.get_context(platform, channel, user_id)
 
-        # Build system prompt with tools
-        system = build_system_prompt(self.tools)
-
-        # Get tool schemas for Anthropic
-        tool_schemas = [t.to_anthropic_schema() for t in self.tools]
+        # Build system prompt with tools filtered by user permission
+        available_tools = [t for t in self.tools if level >= t.required_permission]
+        system = build_system_prompt(available_tools)
+        tool_schemas = [t.to_anthropic_schema() for t in available_tools]
 
         # LLM call with tool loop
         response = await self._llm_with_tools(
@@ -143,12 +173,13 @@ class Shannon:
     ) -> str:
         """Run LLM completion with tool-use loop."""
         current_messages = list(messages)
+        response: LLMResponse | None = None
 
         for _ in range(max_iterations):
-            response: LLMResponse = await self.llm.complete(
+            response = await self.llm.complete(
                 messages=current_messages,
                 system=system,
-                tools=tool_schemas if self.tools else None,
+                tools=tool_schemas if tool_schemas else None,
             )
 
             # No tool calls — return the text
@@ -187,7 +218,10 @@ class Shannon:
                     tool_results_content.append({
                         "type": "tool_result",
                         "tool_use_id": tc.id,
-                        "content": f"Permission denied. Tool '{tc.name}' requires level {tool.required_permission}, you have {user_level}.",
+                        "content": (
+                            f"Permission denied. Tool '{tc.name}' requires "
+                            f"{PermissionLevel(tool.required_permission).name} level."
+                        ),
                         "is_error": True,
                     })
                     continue
@@ -214,6 +248,7 @@ class Shannon:
         """Handle slash commands."""
         parts = content.strip().split(maxsplit=1)
         command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
 
         if command == "/forget":
             count = await self.context.forget(platform, channel)
@@ -226,6 +261,13 @@ class Shannon:
                 f"Context: {stats['message_count']} messages, {stats['total_chars']} chars",
             )
 
+        elif command == "/summarize":
+            summary = await self.context.summarize(platform, channel)
+            if summary:
+                await self._send(platform, channel, f"**Summary:**\n{summary}")
+            else:
+                await self._send(platform, channel, "No context to summarize.")
+
         elif command == "/jobs":
             jobs = await self.scheduler.list_jobs()
             if not jobs:
@@ -234,10 +276,45 @@ class Shannon:
             lines = [f"**{j.name}** — `{j.cron_expr}` — {j.action}" for j in jobs]
             await self._send(platform, channel, "\n".join(lines))
 
+        elif command == "/sudo":
+            if not args:
+                # List pending sudo requests (admin only)
+                if self.auth.check_permission(platform, user_id, PermissionLevel.ADMIN):
+                    pending = self.auth.list_pending_sudo()
+                    if not pending:
+                        await self._send(platform, channel, "No pending sudo requests.")
+                    else:
+                        lines = [
+                            f"`{p['request_id']}` — {p['platform']}:{p['user_id']} → {p['requested_level']} — {p['action']}"
+                            for p in pending
+                        ]
+                        await self._send(platform, channel, "**Pending sudo requests:**\n" + "\n".join(lines))
+                else:
+                    await self._send(platform, channel, "Admin access required to view sudo requests.")
+            elif args.startswith("approve "):
+                request_id = args.split()[1]
+                if self.auth.approve_sudo(request_id, platform, user_id):
+                    await self._send(platform, channel, f"Sudo request `{request_id}` approved.")
+                else:
+                    await self._send(platform, channel, "Failed to approve. Check request ID and your permissions.")
+            elif args.startswith("deny "):
+                request_id = args.split()[1]
+                if self.auth.deny_sudo(request_id):
+                    await self._send(platform, channel, f"Sudo request `{request_id}` denied.")
+                else:
+                    await self._send(platform, channel, f"Request `{request_id}` not found.")
+            else:
+                # User requesting sudo
+                request_id = await self.auth.request_sudo(platform, user_id, args)
+                await self._send(
+                    platform, channel,
+                    f"Sudo requested (`{request_id}`). An admin must approve with `/sudo approve {request_id}`.",
+                )
+
         elif command == "/help":
             await self._send(
                 platform, channel,
-                "**Commands:** /forget, /context, /jobs, /help",
+                "**Commands:** /forget, /context, /summarize, /jobs, /sudo, /help",
             )
         else:
             await self._send(platform, channel, f"Unknown command: {command}")
@@ -274,7 +351,6 @@ async def run(settings: Settings, dry_run: bool = False) -> None:
 
     try:
         if sys.platform == "win32":
-            # Windows doesn't support loop signal handlers, poll instead
             while not stop_event.is_set():
                 await asyncio.sleep(1)
         else:

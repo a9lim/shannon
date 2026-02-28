@@ -32,6 +32,14 @@ def setup_logging(level: str = "INFO", json_output: bool = False) -> None:
     """Configure structlog with optional JSON output."""
     numeric_level = getattr(logging, level.upper(), logging.INFO)
 
+    # Warn if DEBUG is enabled — message content will be logged
+    if numeric_level <= logging.DEBUG:
+        print(
+            "WARNING: DEBUG logging is enabled. Message content and sensitive "
+            "data may appear in logs. Do not use in production.",
+            file=sys.stderr,
+        )
+
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
@@ -72,7 +80,7 @@ def setup_logging(level: str = "INFO", json_output: bool = False) -> None:
     root.setLevel(numeric_level)
 
     # Quiet noisy libraries
-    for name in ("discord", "httpx", "httpcore", "anthropic"):
+    for name in ("discord", "httpx", "httpcore", "anthropic", "playwright"):
         logging.getLogger(name).setLevel(max(numeric_level, logging.WARNING))
 
 
