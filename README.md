@@ -38,6 +38,30 @@ python -m shannon.main
 
 Shannon loads config from environment variables (`SHANNON_` prefix, `__` for nesting) and an optional YAML file. Env vars take precedence.
 
+### Config file location
+
+| Platform | Default path |
+|----------|-------------|
+| Windows | `%APPDATA%\shannon\config.yaml` (e.g. `C:\Users\<you>\AppData\Roaming\shannon\config.yaml`) |
+| macOS | `~/Library/Application Support/shannon/config.yaml` |
+| Linux | `~/.config/shannon/config.yaml` (or `$XDG_CONFIG_HOME/shannon/`) |
+
+You can override this with `--config path/to/config.yaml`, the `SHANNON_CONFIG` env var, or `SHANNON_CONFIG_DIR` to change the directory.
+
+To get started, copy the example config:
+
+```bash
+# Linux/macOS
+mkdir -p ~/.config/shannon
+cp config.example.yaml ~/.config/shannon/config.yaml
+
+# Windows (cmd)
+mkdir "%APPDATA%\shannon"
+copy config.example.yaml "%APPDATA%\shannon\config.yaml"
+```
+
+Then fill in at minimum `llm.api_key` and `discord.token` (or their env var equivalents `SHANNON_LLM__API_KEY` and `SHANNON_DISCORD__TOKEN`).
+
 | Section | Key fields |
 |---------|-----------|
 | `llm` | `provider` (anthropic/local), `model`, `api_key`, `local_endpoint`, `max_tokens`, `temperature` |

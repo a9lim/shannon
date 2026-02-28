@@ -89,11 +89,24 @@ class DiscordTransport(Transport):
 
     async def start(self) -> None:
         self.bus.subscribe(EventType.MESSAGE_OUTGOING, self._handle_outgoing)
-        asyncio.create_task(
-            self._client.start(self._config.token),
+        self._task = asyncio.create_task(
+            self._run_client(),
             name="discord-client",
         )
         log.info("discord_transport_starting")
+
+    async def _run_client(self) -> None:
+        try:
+            await self._client.start(self._config.token)
+        except discord.LoginFailure:
+            log.error("discord_login_failed", hint="Check your bot token and that it is valid")
+        except discord.PrivilegedIntentsRequired:
+            log.error(
+                "discord_privileged_intents_required",
+                hint="Enable MESSAGE_CONTENT intent in Discord Developer Portal > Bot > Privileged Gateway Intents",
+            )
+        except Exception:
+            log.exception("discord_client_error")
 
     async def stop(self) -> None:
         await self._client.close()
