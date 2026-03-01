@@ -75,6 +75,21 @@ class InteractiveConfig(BaseModel):
     max_output_size: int = 10000  # chars
 
 
+class WebhookEndpointConfig(BaseModel):
+    name: str = ""
+    path: str = ""
+    secret: str = ""
+    channel: str = ""
+    prompt_template: str = ""
+
+
+class WebhooksConfig(BaseModel):
+    enabled: bool = False
+    port: int = 8420
+    bind: str = "0.0.0.0"
+    endpoints: list[WebhookEndpointConfig] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SHANNON_",
@@ -90,6 +105,7 @@ class Settings(BaseSettings):
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     interactive: InteractiveConfig = Field(default_factory=InteractiveConfig)
+    webhooks: WebhooksConfig = Field(default_factory=WebhooksConfig)
     data_dir: str = ""
     log_level: str = "INFO"
     log_json: bool = False

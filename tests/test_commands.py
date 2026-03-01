@@ -90,3 +90,110 @@ class TestCommandHandler:
         await handler.handle("discord", "ch1", "admin1", "/sudo deny sudo-abc123")
         auth.deny_sudo.assert_called_once_with("sudo-abc123")
         assert "denied" in send_fn.call_args[0][2]
+
+
+class TestMemoryCommands:
+    @pytest.fixture
+    def handler_with_memory(self, context, scheduler, auth, send_fn):
+        memory = AsyncMock()
+        return CommandHandler(context, scheduler, auth, send_fn, memory_store=memory), memory
+
+    async def test_memory_list(self, handler_with_memory, send_fn):
+        handler, memory = handler_with_memory
+        memory.export_context = AsyncMock(return_value="[identity] name: Shannon")
+        await handler.handle("discord", "ch1", "user1", "/memory")
+        send_fn.assert_awaited()
+        assert "Shannon" in send_fn.call_args[0][2]
+
+    async def test_memory_list_empty(self, handler_with_memory, send_fn):
+        handler, memory = handler_with_memory
+        memory.export_context = AsyncMock(return_value="")
+        await handler.handle("discord", "ch1", "user1", "/memory")
+        assert "No memories" in send_fn.call_args[0][2]
+
+    async def test_memory_search(self, handler_with_memory, send_fn):
+        handler, memory = handler_with_memory
+        memory.search = AsyncMock(return_value=[
+            {"key": "color", "value": "blue", "category": "prefs"},
+        ])
+        await handler.handle("discord", "ch1", "user1", "/memory search color")
+        assert "blue" in send_fn.call_args[0][2]
+
+    async def test_memory_search_empty(self, handler_with_memory, send_fn):
+        handler, memory = handler_with_memory
+        memory.search = AsyncMock(return_value=[])
+        await handler.handle("discord", "ch1", "user1", "/memory search xyz")
+        assert "No memories" in send_fn.call_args[0][2]
+
+    async def test_memory_clear_requires_admin(self, handler_with_memory, send_fn, auth):
+        handler, memory = handler_with_memory
+        auth.check_permission.return_value = False
+        await handler.handle("discord", "ch1", "user1", "/memory clear")
+        assert "Admin" in send_fn.call_args[0][2]
+
+    async def test_memory_clear_admin(self, handler_with_memory, send_fn, auth):
+        handler, memory = handler_with_memory
+        auth.check_permission.return_value = True
+        memory.clear = AsyncMock(return_value=5)
+        await handler.handle("discord", "ch1", "admin1", "/memory clear")
+        assert "Cleared 5" in send_fn.call_args[0][2]
+
+
+from shannon.core.pause import PauseManager
+
+
+class TestPauseCommands:
+    @pytest.fixture
+    def handler_with_pause(self, context, scheduler, auth, send_fn):
+        pm = PauseManager()
+        return CommandHandler(context, scheduler, auth, send_fn, pause_manager=pm), pm
+
+    async def test_pause_command(self, handler_with_pause, send_fn, auth):
+        handler, pm = handler_with_pause
+        auth.check_permission.return_value = True
+        await handler.handle("discord", "ch1", "op1", "/pause")
+        assert pm.is_paused is True
+        send_fn.assert_awaited()
+        assert "Paused" in send_fn.call_args[0][2]
+
+    async def test_pause_with_duration(self, handler_with_pause, send_fn, auth):
+        handler, pm = handler_with_pause
+        auth.check_permission.return_value = True
+        await handler.handle("discord", "ch1", "op1", "/pause 2h")
+        assert pm.is_paused is True
+        assert "2h" in send_fn.call_args[0][2]
+
+    async def test_pause_requires_operator(self, handler_with_pause, send_fn, auth):
+        handler, pm = handler_with_pause
+        auth.check_permission.return_value = False
+        await handler.handle("discord", "ch1", "user1", "/pause")
+        assert pm.is_paused is False
+        assert "Operator" in send_fn.call_args[0][2]
+
+    async def test_resume_command(self, handler_with_pause, send_fn, auth):
+        handler, pm = handler_with_pause
+        pm.pause()
+        auth.check_permission.return_value = True
+        await handler.handle("discord", "ch1", "op1", "/resume")
+        assert pm.is_paused is False
+        assert "Resumed" in send_fn.call_args[0][2]
+
+    async def test_resume_with_queued(self, handler_with_pause, send_fn, auth):
+        handler, pm = handler_with_pause
+        pm.pause()
+        pm.queue_event({"data": "test1"})
+        pm.queue_event({"data": "test2"})
+        auth.check_permission.return_value = True
+        await handler.handle("discord", "ch1", "op1", "/resume")
+        assert "2 queued" in send_fn.call_args[0][2]
+
+    async def test_status_active(self, handler_with_pause, send_fn):
+        handler, pm = handler_with_pause
+        await handler.handle("discord", "ch1", "user1", "/status")
+        assert "Active" in send_fn.call_args[0][2]
+
+    async def test_status_paused(self, handler_with_pause, send_fn):
+        handler, pm = handler_with_pause
+        pm.pause()
+        await handler.handle("discord", "ch1", "user1", "/status")
+        assert "Paused" in send_fn.call_args[0][2]

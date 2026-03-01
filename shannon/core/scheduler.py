@@ -47,10 +47,12 @@ class Scheduler:
         config: SchedulerConfig,
         bus: EventBus,
         data_dir: Path,
+        pause_manager: "PauseManager | None" = None,
     ) -> None:
         self._config = config
         self._bus = bus
         self._data_dir = data_dir
+        self._pause_manager = pause_manager
         self._db: aiosqlite.Connection | None = None
         self._heartbeat_path = (
             Path(config.heartbeat_file) if config.heartbeat_file
@@ -96,6 +98,9 @@ class Scheduler:
 
     async def _heartbeat_loop(self) -> None:
         while self._running:
+            if self._pause_manager and self._pause_manager.is_paused:
+                await asyncio.sleep(self._config.heartbeat_interval)
+                continue
             try:
                 self._heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
                 self._heartbeat_path.write_text(str(time.time()))
@@ -112,6 +117,9 @@ class Scheduler:
             await asyncio.sleep(30)
 
     async def _check_and_fire_jobs(self) -> None:
+        if self._pause_manager and self._pause_manager.is_paused:
+            log.info("cron_skipped_paused")
+            return
         assert self._db is not None
         cursor = await self._db.execute(
             "SELECT id, name, cron_expr, action, last_run FROM jobs WHERE enabled = 1"

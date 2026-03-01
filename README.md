@@ -1,14 +1,18 @@
 # Shannon
 
-An LLM-powered autonomous assistant that communicates over Discord and Signal, executes system commands, browses the web, delegates tasks to Claude Code, drives interactive CLI programs, and schedules its own work.
+An LLM-powered autonomous assistant that communicates over Discord and Signal, executes system commands, browses the web, delegates tasks to Claude Code, drives interactive CLI programs, schedules its own work, reacts to external webhooks, maintains persistent memory, and plans multi-step tasks.
 
 ## Features
 
 - **Multi-platform messaging** — Discord (mentions, DMs, threads) and Signal (signal-cli or REST API)
 - **Dual LLM support** — Anthropic Claude or any OpenAI-compatible local endpoint (ollama, llama.cpp, vllm) with ReAct fallback for models without native tool calling
-- **Tool ecosystem** — Shell execution, Playwright browser automation, Claude Code delegation, interactive PTY sessions
+- **Tool ecosystem** — Shell execution, Playwright browser automation, Claude Code delegation, interactive PTY sessions, persistent memory, multi-step planning
 - **Permission system** — 4-tier auth (public → trusted → operator → admin) with per-tool gating, per-user rate limiting, and sudo escalation with admin approval
 - **Context management** — SQLite-backed conversation history with automatic LLM-based summarization when approaching token limits
+- **Persistent memory** — Cross-session key-value store for facts, preferences, and project state; searchable, categorized, and automatically injected into the LLM system prompt
+- **Webhook triggers** — React to GitHub pushes, Sentry alerts, CI failures, and arbitrary webhooks with HMAC signature validation and LLM-powered responses
+- **Multi-step planning** — Decompose complex goals into step-by-step plans, execute sequentially with progress updates, handle failures with retry/skip/abort
+- **Pause/resume** — Temporarily suspend autonomous behaviors (cron, heartbeat, webhooks) while still responding to direct messages; supports timed auto-resume
 - **Task scheduling** — Cron-based job scheduling with heartbeat monitoring; Shannon can schedule its own recurring tasks
 - **Intelligent chunking** — Splits long responses at natural boundaries (paragraph, sentence, clause) while preserving code blocks
 
@@ -69,6 +73,7 @@ Then fill in at minimum `llm.api_key` and `discord.token` (or their env var equi
 | `signal` | `phone_number`, `mode` (cli/rest), `signal_cli_path`, `rest_api_url` |
 | `auth` | `admin_users`, `operator_users`, `trusted_users`, `rate_limit_per_minute`, `sudo_timeout_seconds` |
 | `browser` | `headless`, `browser` (chromium/firefox/webkit) |
+| `webhooks` | `enabled`, `port` (8420), `bind`, `endpoints` (list of name/path/secret/channel/prompt_template) |
 
 User IDs in auth lists use `platform:user_id` format (e.g., `discord:123456`) or bare IDs for all platforms.
 
@@ -84,6 +89,12 @@ See [`config.example.yaml`](config.example.yaml) for all options.
 | `/jobs` | List scheduled cron jobs |
 | `/sudo <action>` | Request permission elevation |
 | `/sudo approve <id>` | Admin: approve a sudo request |
+| `/memory` | List all stored memories |
+| `/memory search <query>` | Search memories by key or value |
+| `/memory clear` | Clear all memories (Admin only) |
+| `/pause [duration]` | Pause autonomous behaviors (Operator). Optional duration: `2h`, `30m`, `1h30m` |
+| `/resume` | Resume autonomous behaviors (Operator). Reports missed events |
+| `/status` | Show whether Shannon is paused or active |
 | `/help` | Show available commands |
 
 ## Tools
@@ -94,17 +105,21 @@ See [`config.example.yaml`](config.example.yaml) for all options.
 | `browser` | Trusted | Navigate, search, screenshot, click, type, extract, PDF via Playwright |
 | `claude_code` | Operator | Delegate complex coding tasks to Claude Code CLI |
 | `interactive` | Operator | Drive interactive CLI programs (python, ssh, etc.) via PTY |
+| `memory_set` | Trusted | Store a key-value pair in persistent memory |
+| `memory_get` | Trusted | Retrieve a memory by key or search by query |
+| `memory_delete` | Operator | Delete a memory entry |
+| `plan` | Operator | Create and execute a multi-step plan for a complex goal |
 
 Tools are only available to users meeting the required permission level. The LLM only sees tools the user is authorized to use.
 
 ## Architecture
 
 ```
-Discord/Signal → Transport → EventBus → Shannon._handle_message()
+Discord/Signal → Transport → EventBus → MessageHandler.handle()
                                               ↓
                                      rate limit + auth check
                                               ↓
-                                     load context (SQLite)
+                                     load context (SQLite) + memory
                                               ↓
                                      LLM call with tool schemas
                                               ↓
@@ -113,9 +128,13 @@ Discord/Signal → Transport → EventBus → Shannon._handle_message()
                                      store response + publish MessageOutgoing
                                               ↓
                               EventBus → Transport → Discord/Signal
+
+GitHub/Sentry/HTTP → WebhookServer → validate HMAC → normalize → EventBus
+                                                                     ↓
+                                                          (same pipeline as above)
 ```
 
-All components communicate through the async event bus and have `start()`/`stop()` lifecycle methods. Tools with heavy resources (browser, interactive sessions) initialize lazily on first use.
+All components communicate through the async event bus and have `start()`/`stop()` lifecycle methods. Tools with heavy resources (browser, interactive sessions) initialize lazily on first use. The pause manager can suspend autonomous behaviors (cron, heartbeat, webhooks) without stopping the bot.
 
 ## Development
 

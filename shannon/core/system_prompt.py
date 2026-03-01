@@ -28,7 +28,9 @@ Context:
 """
 
 
-def build_system_prompt(tools: list[BaseTool]) -> str:
+def build_system_prompt(
+    tools: list[BaseTool], memory_context: str = ""
+) -> str:
     """Build the full system prompt with tool descriptions."""
     parts = [_BASE_PROMPT]
 
@@ -36,5 +38,8 @@ def build_system_prompt(tools: list[BaseTool]) -> str:
         parts.append("\nAvailable tools:")
         for tool in tools:
             parts.append(f"- **{tool.name}**: {tool.description}")
+
+    if memory_context:
+        parts.append(f"\nCurrent Memory:\n{memory_context}")
 
     return "\n".join(parts)

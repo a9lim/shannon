@@ -15,6 +15,7 @@ from shannon.core.bus import EventBus, EventType
 from shannon.core.commands import CommandHandler
 from shannon.core.context import ContextManager
 from shannon.core.llm import create_provider
+from shannon.core.pause import PauseManager
 from shannon.core.pipeline import MessageHandler
 from shannon.core.scheduler import Scheduler
 from shannon.core.tool_executor import ToolExecutor
@@ -23,9 +24,14 @@ from shannon.tools.shell import ShellTool
 from shannon.tools.browser import BrowserTool
 from shannon.tools.claude_code import ClaudeCodeTool
 from shannon.tools.interactive import InteractiveTool
+from shannon.memory.store import MemoryStore
+from shannon.planner.engine import PlanEngine
+from shannon.tools.memory_tools import MemorySetTool, MemoryGetTool, MemoryDeleteTool
+from shannon.tools.plan_tool import PlanTool
 from shannon.transports.discord_transport import DiscordTransport
 from shannon.transports.signal_transport import SignalTransport
 from shannon.utils.logging import get_logger, setup_logging
+from shannon.webhooks.server import WebhookServer
 
 log = get_logger(__name__)
 
@@ -43,7 +49,12 @@ class Shannon:
             llm=self.llm,
             max_context_tokens=settings.llm.max_context_tokens,
         )
-        self.scheduler = Scheduler(settings.scheduler, self.bus, settings.get_data_dir())
+        self.pause_manager = PauseManager()
+        self.scheduler = Scheduler(
+            settings.scheduler, self.bus, settings.get_data_dir(),
+            pause_manager=self.pause_manager,
+        )
+        self.memory = MemoryStore(db_path=settings.get_data_dir() / "memory.db")
 
         # Tools
         self.tools: list[BaseTool] = [
@@ -51,24 +62,41 @@ class Shannon:
             BrowserTool(settings.browser),
             ClaudeCodeTool(),
             InteractiveTool(settings.interactive),
+            MemorySetTool(self.memory),
+            MemoryGetTool(self.memory),
+            MemoryDeleteTool(self.memory),
         ]
         tool_map: dict[str, BaseTool] = {t.name: t for t in self.tools}
+
+        # Planner (uses tool_map but is not itself in tool_map to prevent recursion)
+        self.planner = PlanEngine(
+            llm=self.llm, tool_map=tool_map,
+            db_path=settings.get_data_dir() / "plans.db",
+        )
+        self.tools.append(PlanTool(self.planner))
+        tool_map = {t.name: t for t in self.tools}
 
         # Build pipeline
         tool_executor = ToolExecutor(self.llm, tool_map)
         command_handler = CommandHandler(
             self.context, self.scheduler, self.auth, self._send,
+            memory_store=self.memory,
+            pause_manager=self.pause_manager,
         )
         self._pipeline = MessageHandler(
             self.auth, self.context, tool_executor, command_handler,
             self.bus, self.tools, dry_run=dry_run,
+            memory_store=self.memory,
         )
 
+        self._webhook_server = WebhookServer(settings.webhooks, self.bus)
         self.transports: list[Any] = []
 
     async def start(self) -> None:
         log.info("shannon_starting", version="0.1.0", provider=self.settings.llm.provider)
         await self.context.start()
+        await self.memory.start()
+        await self.planner.start()
         self.bus.subscribe(EventType.MESSAGE_INCOMING, self._pipeline.handle)
 
         if self.settings.scheduler.enabled:
@@ -84,6 +112,7 @@ class Shannon:
             self.transports.append(t)
             await t.start()
 
+        await self._webhook_server.start()
         await self.bus.start()
         log.info("shannon_ready")
 
@@ -92,8 +121,11 @@ class Shannon:
         await self.bus.stop()
         for transport in self.transports:
             await transport.stop()
+        await self._webhook_server.stop()
         await self.scheduler.stop()
         await self.context.stop()
+        await self.memory.stop()
+        await self.planner.stop()
         await self.llm.close()
         for tool in self.tools:
             try:

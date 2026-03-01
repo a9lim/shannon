@@ -22,6 +22,7 @@ class EventType(str, Enum):
     MESSAGE_INCOMING = "message.incoming"
     MESSAGE_OUTGOING = "message.outgoing"
     SCHEDULER_TRIGGER = "scheduler.trigger"
+    WEBHOOK_RECEIVED = "webhook.received"
 
 
 @dataclass
@@ -52,6 +53,12 @@ class MessageOutgoing(Event):
 class SchedulerTrigger(Event):
     type: EventType = field(default=EventType.SCHEDULER_TRIGGER, init=False)
     # data keys: job_id, job_name, cron_expr
+
+
+@dataclass
+class WebhookReceived(Event):
+    type: EventType = field(default=EventType.WEBHOOK_RECEIVED, init=False)
+    # data keys: source, event_type, summary, payload, channel_target
 
 
 # Deferred import to avoid circular dependency at module level

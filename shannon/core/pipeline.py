@@ -29,6 +29,7 @@ class MessageHandler:
         bus: EventBus,
         tools: list[BaseTool],
         dry_run: bool = False,
+        memory_store: "MemoryStore | None" = None,
     ) -> None:
         self._auth = auth
         self._context = context
@@ -37,6 +38,7 @@ class MessageHandler:
         self._bus = bus
         self._tools = tools
         self._dry_run = dry_run
+        self._memory_store = memory_store
 
     async def handle(self, event: Event) -> None:
         msg: IncomingMessage = event.message  # type: ignore[attr-defined]
@@ -75,7 +77,10 @@ class MessageHandler:
 
         # Build system prompt with tools filtered by user permission
         available_tools = [t for t in self._tools if level >= t.required_permission]
-        system = build_system_prompt(available_tools)
+        memory_context = ""
+        if self._memory_store:
+            memory_context = await self._memory_store.export_context()
+        system = build_system_prompt(available_tools, memory_context=memory_context)
         tool_schemas = [t.to_anthropic_schema() for t in available_tools]
 
         # LLM call with tool loop
