@@ -35,6 +35,13 @@ class WebhookServer:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        for endpoint in self._config.endpoints:
+            if not endpoint.secret:
+                log.warning(
+                    "webhook_endpoint_no_secret",
+                    endpoint=endpoint.name or endpoint.path,
+                    msg="Endpoint has no secret configured — all requests will be rejected. Set a secret in config.",
+                )
         app = self._build_app()
         self._runner = web.AppRunner(app)
         await self._runner.setup()

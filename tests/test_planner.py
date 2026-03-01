@@ -121,7 +121,7 @@ class TestPlanExecution:
             id="test-1",
             goal="Test",
             steps=[
-                PlanStep(id=1, description="Run ls", tool="shell"),
+                PlanStep(id=1, description="Run ls", tool="shell", parameters={"command": "ls"}),
                 PlanStep(id=2, description="Think about it"),
             ],
             status="executing",
@@ -151,8 +151,8 @@ class TestPlanExecution:
             id="test-2",
             goal="Test",
             steps=[
-                PlanStep(id=1, description="Run bad cmd", tool="shell"),
-                PlanStep(id=2, description="Next step", tool="shell"),
+                PlanStep(id=1, description="Run bad cmd", tool="shell", parameters={"command": "bad_cmd"}),
+                PlanStep(id=2, description="Next step", tool="shell", parameters={"command": "ls"}),
             ],
             status="executing",
             channel="discord:123",
@@ -174,8 +174,8 @@ class TestPlanExecution:
             id="test-abort",
             goal="Test",
             steps=[
-                PlanStep(id=1, description="Fail", tool="shell"),
-                PlanStep(id=2, description="Never reached", tool="shell"),
+                PlanStep(id=1, description="Fail", tool="shell", parameters={"command": "fail"}),
+                PlanStep(id=2, description="Never reached", tool="shell", parameters={"command": "ls"}),
             ],
             status="executing",
             channel="discord:123",
@@ -189,7 +189,7 @@ class TestPlanExecution:
         plan = Plan(
             id="test-3",
             goal="Test",
-            steps=[PlanStep(id=i, description=f"Step {i}", tool="shell") for i in range(16)],
+            steps=[PlanStep(id=i, description=f"Step {i}", tool="shell", parameters={"command": f"cmd{i}"}) for i in range(16)],
             status="executing",
             channel="discord:123",
         )
@@ -201,6 +201,27 @@ class TestPlanExecution:
         result = await engine.execute_plan(plan, user_level=PermissionLevel.OPERATOR, send_fn=send)
         done_count = sum(1 for s in result.steps if s.status == "done")
         assert done_count <= 15
+
+
+    async def test_execute_plan_missing_parameters_skipped(self, engine, mock_llm, mock_tool_map):
+        """Steps with a tool but no parameters should fail safely, not pass description as command."""
+        mock_llm.complete = AsyncMock(return_value=LLMResponse(
+            content=json.dumps({"action": "skip"}),
+            tool_calls=[], stop_reason="end_turn", input_tokens=10, output_tokens=10,
+        ))
+        plan = Plan(
+            id="test-no-params",
+            goal="Test",
+            steps=[
+                PlanStep(id=1, description="Run something", tool="shell"),  # no parameters
+            ],
+            status="executing",
+            channel="discord:123",
+        )
+        send = AsyncMock()
+        result = await engine.execute_plan(plan, user_level=PermissionLevel.OPERATOR, send_fn=send)
+        assert result.steps[0].status == "skipped"
+        mock_tool_map["shell"].execute.assert_not_awaited()
 
 
 class TestPlanPersistence:

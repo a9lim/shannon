@@ -99,9 +99,9 @@ class TestGitHubSignature:
         body = b'{"action": "push"}'
         assert validate_github_signature(body, "", "my-secret") is False
 
-    def test_no_secret_configured(self):
+    def test_no_secret_configured_rejects(self):
         body = b'{"action": "push"}'
-        assert validate_github_signature(body, "", "") is True
+        assert validate_github_signature(body, "", "") is False
 
 
 class TestGenericSecret:
@@ -111,8 +111,8 @@ class TestGenericSecret:
     def test_invalid(self):
         assert validate_generic_secret("wrong", "token123") is False
 
-    def test_no_secret_configured(self):
-        assert validate_generic_secret("", "") is True
+    def test_no_secret_configured_rejects(self):
+        assert validate_generic_secret("", "") is False
 
 
 # ---------------------------------------------------------------------------

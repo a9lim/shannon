@@ -35,13 +35,17 @@ class CommandHandler:
         self._pause_manager = pause_manager
 
     async def handle(
-        self, platform: str, channel: str, user_id: str, content: str
+        self, platform: str, channel: str, user_id: str, content: str,
+        level: PermissionLevel = PermissionLevel.PUBLIC,
     ) -> None:
         parts = content.strip().split(maxsplit=1)
         command = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
         if command == "/forget":
+            if level < PermissionLevel.OPERATOR:
+                await self._send(platform, channel, "Operator access required for /forget.")
+                return
             count = await self._context.forget(platform, channel)
             await self._send(platform, channel, f"Cleared {count} messages from context.")
 
@@ -60,6 +64,9 @@ class CommandHandler:
                 await self._send(platform, channel, "No context to summarize.")
 
         elif command == "/jobs":
+            if level < PermissionLevel.TRUSTED:
+                await self._send(platform, channel, "Trusted access required for /jobs.")
+                return
             jobs = await self._scheduler.list_jobs()
             if not jobs:
                 await self._send(platform, channel, "No scheduled jobs.")

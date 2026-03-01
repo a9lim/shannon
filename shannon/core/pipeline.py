@@ -55,14 +55,14 @@ class MessageHandler:
             await self._send(platform, channel, "You're sending messages too quickly. Please slow down.")
             return
 
-        # Handle slash commands
-        if content.startswith("/"):
-            await self._commands.handle(platform, channel, user_id, content)
-            return
-
-        # Auth check
+        # Auth check (before command dispatch so commands respect permissions)
         level = self._auth.get_level(platform, user_id)
         if level < PermissionLevel.PUBLIC:
+            return
+
+        # Handle slash commands
+        if content.startswith("/"):
+            await self._commands.handle(platform, channel, user_id, content, level)
             return
 
         # Store user message in context

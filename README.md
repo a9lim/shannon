@@ -10,7 +10,7 @@ An LLM-powered autonomous assistant that communicates over Discord and Signal, e
 - **Permission system** — 4-tier auth (public → trusted → operator → admin) with per-tool gating, per-user rate limiting, and sudo escalation with admin approval
 - **Context management** — SQLite-backed conversation history with automatic LLM-based summarization when approaching token limits
 - **Persistent memory** — Cross-session key-value store for facts, preferences, and project state; searchable, categorized, and automatically injected into the LLM system prompt
-- **Webhook triggers** — React to GitHub pushes, Sentry alerts, CI failures, and arbitrary webhooks with HMAC signature validation and LLM-powered responses
+- **Webhook triggers** — React to GitHub pushes, Sentry alerts, CI failures, and arbitrary webhooks with mandatory HMAC signature validation and LLM-powered responses
 - **Multi-step planning** — Decompose complex goals into step-by-step plans, execute sequentially with progress updates, handle failures with retry/skip/abort
 - **Pause/resume** — Temporarily suspend autonomous behaviors (cron, heartbeat, webhooks) while still responding to direct messages; supports timed auto-resume
 - **Task scheduling** — Cron-based job scheduling with heartbeat monitoring; Shannon can schedule its own recurring tasks
@@ -83,10 +83,10 @@ See [`config.example.yaml`](config.example.yaml) for all options.
 
 | Command | Description |
 |---------|-------------|
-| `/forget` | Clear conversation history for the channel |
+| `/forget` | Clear conversation history for the channel (Operator) |
 | `/context` | Show context stats (message count, chars) |
 | `/summarize` | Generate an LLM summary of the conversation |
-| `/jobs` | List scheduled cron jobs |
+| `/jobs` | List scheduled cron jobs (Trusted) |
 | `/sudo <action>` | Request permission elevation |
 | `/sudo approve <id>` | Admin: approve a sudo request |
 | `/memory` | List all stored memories |

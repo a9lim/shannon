@@ -34,13 +34,18 @@ CREATE TABLE IF NOT EXISTS plans (
 
 _CREATE_PLAN_PROMPT = """\
 Decompose the following goal into 2-8 concrete steps. Each step should be \
-a single action. For steps that use a tool, specify the tool name. \
-For reasoning/analysis steps, set tool to null.
+a single action. For steps that use a tool, specify the tool name and \
+provide the exact parameters to pass to the tool. \
+For reasoning/analysis steps, set tool to null and omit parameters.
 
 Available tools: {tools}
 
 Respond with ONLY a JSON object:
-{{"steps": [{{"description": "...", "tool": "tool_name_or_null"}}]}}
+{{"steps": [{{"description": "Human-readable description of the step", "tool": "tool_name_or_null", "parameters": {{"command": "exact command or argument"}}}}]}}
+
+For the shell tool, "parameters" must contain {{"command": "the exact shell command to run"}}.
+For other tools, "parameters" should contain the appropriate keyword arguments.
+For reasoning steps (tool is null), omit "parameters".
 
 Goal: {goal}
 
@@ -130,10 +135,14 @@ class PlanEngine:
             tool = raw.get("tool")
             if tool == "null" or tool is None:
                 tool = None
+            parameters = raw.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = None
             steps.append(PlanStep(
                 id=i,
                 description=raw.get("description", f"Step {i}"),
                 tool=tool,
+                parameters=parameters,
             ))
         return steps or [PlanStep(id=1, description="Execute the goal directly")]
 
@@ -180,7 +189,24 @@ class PlanEngine:
                         step.status = "skipped"
                     continue
 
-                result = await tool.execute(command=step.description)
+                if step.parameters:
+                    result = await tool.execute(**step.parameters)
+                else:
+                    log.warning(
+                        "plan_step_missing_parameters",
+                        step_id=step.id,
+                        tool=step.tool,
+                        msg="Step has no parameters; skipping to avoid passing description as command.",
+                    )
+                    step.status = "failed"
+                    step.error = "Step is missing tool parameters"
+                    action = await self._handle_failure(plan, step)
+                    if action == "abort":
+                        plan.status = "failed"
+                        break
+                    elif action == "skip":
+                        step.status = "skipped"
+                    continue
                 tool_invocations += 1
 
                 if result.success:
@@ -263,6 +289,7 @@ class PlanEngine:
         steps_json = json.dumps([
             {
                 "id": s.id, "description": s.description, "tool": s.tool,
+                "parameters": s.parameters,
                 "status": s.status, "result": s.result, "error": s.error,
             }
             for s in plan.steps
@@ -294,6 +321,7 @@ class PlanEngine:
         steps = [
             PlanStep(
                 id=s["id"], description=s["description"], tool=s.get("tool"),
+                parameters=s.get("parameters"),
                 status=s.get("status", "pending"), result=s.get("result"),
                 error=s.get("error"),
             )

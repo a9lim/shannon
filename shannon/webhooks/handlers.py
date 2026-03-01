@@ -16,10 +16,10 @@ from shannon.webhooks.models import WebhookEvent
 def validate_github_signature(body: bytes, signature: str, secret: str) -> bool:
     """Validate GitHub webhook HMAC-SHA256 signature.
 
-    Returns True if no secret is configured (validation skipped).
+    Returns False if no secret is configured (rejects unauthenticated requests).
     """
     if not secret:
-        return True
+        return False
     if not signature:
         return False
     expected = "sha256=" + hmac.new(
@@ -31,10 +31,10 @@ def validate_github_signature(body: bytes, signature: str, secret: str) -> bool:
 def validate_sentry_signature(body: bytes, signature: str, secret: str) -> bool:
     """Validate Sentry webhook HMAC-SHA256 signature.
 
-    Returns True if no secret is configured (validation skipped).
+    Returns False if no secret is configured (rejects unauthenticated requests).
     """
     if not secret:
-        return True
+        return False
     if not signature:
         return False
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
@@ -44,10 +44,10 @@ def validate_sentry_signature(body: bytes, signature: str, secret: str) -> bool:
 def validate_generic_secret(provided: str, configured: str) -> bool:
     """Validate a generic shared secret via constant-time comparison.
 
-    Returns True if no secret is configured (validation skipped).
+    Returns False if no secret is configured (rejects unauthenticated requests).
     """
     if not configured:
-        return True
+        return False
     if not provided:
         return False
     return hmac.compare_digest(provided, configured)

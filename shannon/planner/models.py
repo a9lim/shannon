@@ -12,6 +12,7 @@ class PlanStep:
     id: int
     description: str
     tool: str | None = None
+    parameters: dict[str, str] | None = None
     status: Literal["pending", "running", "done", "failed", "skipped"] = "pending"
     result: str | None = None
     error: str | None = None

@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from shannon.core.auth import PermissionLevel
 from shannon.core.commands import CommandHandler
 
 
@@ -45,9 +46,13 @@ def handler(context, scheduler, auth, send_fn):
 
 class TestCommandHandler:
     async def test_forget(self, handler, send_fn):
-        await handler.handle("discord", "ch1", "user1", "/forget")
+        await handler.handle("discord", "ch1", "user1", "/forget", level=PermissionLevel.OPERATOR)
         send_fn.assert_awaited_once()
         assert "Cleared 5" in send_fn.call_args[0][2]
+
+    async def test_forget_requires_operator(self, handler, send_fn):
+        await handler.handle("discord", "ch1", "user1", "/forget", level=PermissionLevel.TRUSTED)
+        assert "Operator access required" in send_fn.call_args[0][2]
 
     async def test_context(self, handler, send_fn):
         await handler.handle("discord", "ch1", "user1", "/context")
@@ -65,8 +70,12 @@ class TestCommandHandler:
         assert "No context" in send_fn.call_args[0][2]
 
     async def test_jobs_empty(self, handler, send_fn):
-        await handler.handle("discord", "ch1", "user1", "/jobs")
+        await handler.handle("discord", "ch1", "user1", "/jobs", level=PermissionLevel.TRUSTED)
         assert "No scheduled jobs" in send_fn.call_args[0][2]
+
+    async def test_jobs_requires_trusted(self, handler, send_fn):
+        await handler.handle("discord", "ch1", "user1", "/jobs", level=PermissionLevel.PUBLIC)
+        assert "Trusted access required" in send_fn.call_args[0][2]
 
     async def test_help(self, handler, send_fn):
         await handler.handle("discord", "ch1", "user1", "/help")
