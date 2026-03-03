@@ -81,7 +81,7 @@ class MessageHandler:
         if self._memory_store:
             memory_context = await self._memory_store.export_context()
         system = build_system_prompt(available_tools, memory_context=memory_context)
-        tool_schemas = [t.to_anthropic_schema() for t in available_tools]
+        tool_schemas = [t.to_schema() for t in available_tools]
 
         # LLM call with tool loop
         response = await self._tool_executor.run(

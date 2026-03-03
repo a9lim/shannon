@@ -43,8 +43,8 @@ class BaseTool(ABC):
     async def cleanup(self) -> None:
         """Clean up resources. Override if needed."""
 
-    def to_anthropic_schema(self) -> dict[str, Any]:
-        """Convert to Anthropic tool format."""
+    def to_schema(self) -> dict[str, Any]:
+        """Convert to generic tool schema format."""
         return {
             "name": self.name,
             "description": self.description,
