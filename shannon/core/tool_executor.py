@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from shannon.core.auth import PermissionLevel
-from shannon.core.llm import LLMMessage, LLMProvider, LLMResponse
-from shannon.core.llm.types import ToolCallResult
+from shannon.core.llm import LLMMessage, LLMProvider, LLMResponse, ToolCallResult
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 

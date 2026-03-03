@@ -1,0 +1,2 @@
+[console_scripts]
+shannon = shannon.main:cli

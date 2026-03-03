@@ -14,14 +14,17 @@ from shannon.utils.platform import get_config_dir, get_data_dir
 
 
 class LLMConfig(BaseModel):
-    provider: str = "anthropic"  # "anthropic" | "local"
+    provider: str = "anthropic"  # "anthropic" | "openai" | "gemini" | "openai-compatible"
     model: str = "claude-sonnet-4-20250514"
     api_key: str = ""
-    local_endpoint: str = "http://localhost:11434/v1"  # OpenAI-compatible endpoint
+    base_url: str = ""  # for openai-compatible; provider defaults if empty
     max_tokens: int = 4096
     temperature: float = 0.7
     max_context_tokens: int = 100_000
     rate_limit_rpm: int = 50
+    # Gemini Vertex AI (optional)
+    project_id: str = ""
+    location: str = "us-central1"
 
 
 class DiscordConfig(BaseModel):

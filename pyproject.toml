@@ -30,6 +30,9 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
 ]
+openai = ["openai>=1.0"]
+gemini = ["google-genai>=1.0"]
+all-providers = ["openai>=1.0", "google-genai>=1.0"]
 
 [project.scripts]
 shannon = "shannon.main:cli"
