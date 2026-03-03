@@ -68,7 +68,33 @@ class AnthropicProvider(LLMProvider):
     ) -> dict[str, Any]:
         api_messages = []
         for msg in messages:
-            api_messages.append({"role": msg.role, "content": msg.content})
+            if msg.tool_calls:
+                # Assistant message with tool calls → Anthropic content blocks
+                content: list[dict[str, Any]] = []
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+                for tc in msg.tool_calls:
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.arguments,
+                    })
+                api_messages.append({"role": "assistant", "content": content})
+            elif msg.tool_results:
+                # Tool results → Anthropic tool_result content blocks
+                content = []
+                for tr in msg.tool_results:
+                    content.append({
+                        "type": "tool_result",
+                        "tool_use_id": tr.id,
+                        "content": tr.output,
+                        "is_error": tr.is_error,
+                    })
+                api_messages.append({"role": "user", "content": content})
+            else:
+                # Plain text message
+                api_messages.append({"role": msg.role, "content": msg.content})
 
         kwargs: dict[str, Any] = {
             "model": self._model,
