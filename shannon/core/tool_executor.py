@@ -6,6 +6,7 @@ from typing import Any
 
 from shannon.core.auth import PermissionLevel
 from shannon.core.llm import LLMMessage, LLMProvider, LLMResponse
+from shannon.core.llm.types import ToolCallResult
 from shannon.tools.base import BaseTool, ToolResult
 from shannon.utils.logging import get_logger
 
@@ -42,58 +43,43 @@ class ToolExecutor:
             if not response.tool_calls:
                 return response.content
 
-            # Process tool calls
-            tool_results_content: list[dict[str, Any]] = []
+            # Add assistant message with tool calls
+            current_messages.append(LLMMessage(
+                role="assistant",
+                content=response.content,
+                tool_calls=response.tool_calls,
+            ))
 
-            # Add assistant message with tool use
-            assistant_content: list[dict[str, Any]] = []
-            if response.content:
-                assistant_content.append({"type": "text", "text": response.content})
-            for tc in response.tool_calls:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tc.id,
-                    "name": tc.name,
-                    "input": tc.arguments,
-                })
-            current_messages.append(LLMMessage(role="assistant", content=assistant_content))
-
+            # Execute tools and collect results
+            results: list[ToolCallResult] = []
             for tc in response.tool_calls:
                 tool = self._tool_map.get(tc.name)
                 if not tool:
-                    tool_results_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc.id,
-                        "content": f"Error: Unknown tool '{tc.name}'",
-                        "is_error": True,
-                    })
+                    results.append(ToolCallResult(
+                        id=tc.id,
+                        output=f"Error: Unknown tool '{tc.name}'",
+                        is_error=True,
+                    ))
                     continue
 
-                # Permission check
                 if user_level < tool.required_permission:
-                    tool_results_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc.id,
-                        "content": (
+                    results.append(ToolCallResult(
+                        id=tc.id,
+                        output=(
                             f"Permission denied. Tool '{tc.name}' requires "
                             f"{PermissionLevel(tool.required_permission).name} level."
                         ),
-                        "is_error": True,
-                    })
+                        is_error=True,
+                    ))
                     continue
 
-                # Execute tool
                 log.info("tool_executing", tool=tc.name, args=tc.arguments)
                 result: ToolResult = await tool.execute(**tc.arguments)
-
                 output = result.output if result.success else f"Error: {result.error}"
-                tool_results_content.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
-                    "content": output,
-                    "is_error": not result.success,
-                })
+                results.append(ToolCallResult(
+                    id=tc.id, output=output, is_error=not result.success,
+                ))
 
-            current_messages.append(LLMMessage(role="user", content=tool_results_content))
+            current_messages.append(LLMMessage(role="user", tool_results=results))
 
         return response.content if response else ""
