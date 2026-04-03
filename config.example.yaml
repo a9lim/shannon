@@ -1,0 +1,75 @@
+llm:
+  model: claude-opus-4-6
+  max_tokens: 16000
+  thinking: true
+  compaction: true
+  api_key: ""             # Or set ANTHROPIC_API_KEY env var
+
+tools:
+  computer_use:
+    enabled: true
+    require_confirmation: true
+  bash:
+    enabled: true
+    require_confirmation: true
+    blocklist:
+      - "rm -rf"
+      - sudo
+      - shutdown
+      - reboot
+      - mkfs
+      - "dd if="
+    timeout_seconds: 30
+  text_editor:
+    enabled: true
+    require_confirmation: true
+
+tts:
+  type: piper
+  model: en_US-lessac-medium
+  rate: 1.0
+
+stt:
+  type: whisper
+  model: base.en
+  device: auto
+
+vision:
+  screen: true
+  webcam: false
+  interval_seconds: 60.0
+
+vtuber:
+  type: vtube_studio
+  host: localhost
+  port: 8001
+  auth_token: ""
+
+messaging:
+  type: discord
+  enabled: false
+  token: ""
+  debounce_delay: 3.0
+  reply_probability: 0.0
+  reaction_probability: 0.0
+  conversation_expiry: 300.0
+  max_context_messages: 20
+  admin_ids: []
+
+autonomy:
+  enabled: true
+  cooldown_seconds: 30
+  triggers:
+    - screen_change
+    - idle_timeout
+  idle_timeout_seconds: 120
+
+personality:
+  name: Shannon
+  prompt_file: personality.md
+
+memory:
+  dir: memory
+  conversation_window: 50
+  recall_top_k: 5
+  max_continues: 5
