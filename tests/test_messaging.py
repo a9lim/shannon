@@ -638,3 +638,60 @@ async def test_manager_ignores_when_not_in_conversation():
     )
     await asyncio.sleep(0.05)
     assert len(received) == 0
+
+
+@pytest.mark.asyncio
+async def test_debounce_race_does_not_pop_new_task():
+    """When message A's debounce is cancelled by message B, A's finally block must not
+    remove B's entry from _pending, leaving B un-cancellable by future messages."""
+    bus = EventBus()
+    provider = FakeMessagingProvider("discord")
+    config = MessagingConfig(debounce_delay=0.2)
+    manager = MessagingManager(bus, [provider], config)
+    await manager.start()
+
+    received: list[ChatMessage] = []
+    async def capture(event: ChatMessage):
+        received.append(event)
+    bus.subscribe(ChatMessage, capture)
+
+    # Send message A, then before its debounce fires send message B (which cancels A).
+    await provider.simulate_message("first", "user", "chan", "msg1", is_mention=True)
+    await asyncio.sleep(0.05)  # A is sleeping; B cancels A
+    await provider.simulate_message("second", "user", "chan", "msg2", is_mention=True)
+
+    # After A's cancelled finally runs, _pending should still contain B's task.
+    await asyncio.sleep(0.01)  # Let A's finally run
+    key = "discord:chan"
+    assert key in manager._pending, "B's task was incorrectly removed from _pending by A's finally block"
+
+    # Wait for B's debounce to complete.
+    await asyncio.sleep(0.25)
+    assert len(received) == 1
+    assert received[0].text == "second"
+
+    # After B completes, _pending should be clean.
+    assert key not in manager._pending, "_pending should be empty after B's task completes"
+
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_reactions_without_reply_to_are_logged_not_silently_dropped(caplog):
+    """When ChatResponse has reactions but no reply_to, a debug log should be emitted."""
+    import logging
+    bus = EventBus()
+    provider = FakeMessagingProvider("discord")
+    config = MessagingConfig(debounce_delay=0.0)
+    manager = MessagingManager(bus, [provider], config)
+    await manager.start()
+
+    with caplog.at_level(logging.DEBUG, logger="shannon.messaging.manager"):
+        await bus.publish(ChatResponse(
+            text="hello", platform="discord", channel="chan",
+            reply_to="", reactions=["👍"],
+        ))
+
+    assert len(provider.reactions) == 0, "Reactions should not be applied without reply_to"
+    assert any("dropped" in record.message.lower() for record in caplog.records), \
+        "Expected a debug log about dropped reactions"

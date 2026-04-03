@@ -173,7 +173,10 @@ class MessagingManager:
             except asyncio.CancelledError:
                 pass
             finally:
-                self._pending.pop(key, None)
+                # Only remove if we're still the current pending task; a newer
+                # message may have already replaced our entry in _pending.
+                if self._pending.get(key) is task:
+                    del self._pending[key]
 
         task = asyncio.create_task(_debounced_publish())
         self._pending[key] = task
@@ -199,6 +202,9 @@ class MessagingManager:
         await provider.send_message(event.channel, event.text, reply_to=reply_to)
 
         # Apply reactions
-        if event.reactions and event.reply_to:
-            for emoji in event.reactions:
-                await provider.add_reaction(event.channel, event.reply_to, emoji)
+        if event.reactions:
+            if event.reply_to:
+                for emoji in event.reactions:
+                    await provider.add_reaction(event.channel, event.reply_to, emoji)
+            else:
+                logger.debug("Reactions dropped — no reply_to message ID to attach them to")
