@@ -172,3 +172,8 @@ async def test_missing_command_key_returns_error():
     result = await executor.execute({})
     assert result  # non-empty error message
     await executor.close()
+
+
+def test_max_output_constant():
+    from shannon.tools.bash_executor import _MAX_OUTPUT
+    assert _MAX_OUTPUT == 10_000

@@ -8,7 +8,7 @@ from typing import Any
 
 from shannon.config import BashConfig
 
-_MAX_OUTPUT = 50_000  # characters
+_MAX_OUTPUT = 10_000  # characters
 
 
 class BashExecutor:
