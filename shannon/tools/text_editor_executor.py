@@ -10,7 +10,13 @@ from shannon.config import TextEditorConfig
 
 
 class TextEditorExecutor:
-    """Execute text-editor tool commands dispatched from the LLM."""
+    """Execute text-editor tool commands dispatched from the LLM.
+
+    Security note: This executor accepts arbitrary file paths. Access control
+    is enforced by the ``require_confirmation`` flag in config, which prompts
+    the user before any file operation. When running with
+    ``--dangerously-skip-permissions``, the LLM has full filesystem access.
+    """
 
     def __init__(self, config: TextEditorConfig) -> None:
         self.config = config
