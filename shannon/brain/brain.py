@@ -235,15 +235,31 @@ class Brain:
                     elif self._dispatcher.is_expression(tool_call.name):
                         # Parse expression args and emit event
                         expr_name = tool_call.arguments.get("name", "neutral")
-                        intensity = float(tool_call.arguments.get("intensity", 0.7))
+                        try:
+                            intensity = float(tool_call.arguments.get("intensity", 0.7))
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "Invalid expression intensity %r for tool %s; defaulting to 0.7",
+                                tool_call.arguments.get("intensity"),
+                                tool_call.name,
+                            )
+                            intensity = 0.7
                         expressions.append({"name": expr_name, "intensity": intensity})
                         await self._bus.publish(
                             ExpressionChange(name=expr_name, intensity=intensity)
                         )
-                        result = await self._dispatcher.dispatch(tool_call)
+                        try:
+                            result = await self._dispatcher.dispatch(tool_call)
+                        except Exception:
+                            logger.exception("Tool executor raised for %s (id=%s)", tool_call.name, tool_call.id)
+                            result = f"Error: tool '{tool_call.name}' raised an exception"
                         tool_results.append({"id": tool_call.id, "content": _tool_content(result)})
                     else:
-                        result = await self._dispatcher.dispatch(tool_call)
+                        try:
+                            result = await self._dispatcher.dispatch(tool_call)
+                        except Exception:
+                            logger.exception("Tool executor raised for %s (id=%s)", tool_call.name, tool_call.id)
+                            result = f"Error: tool '{tool_call.name}' raised an exception"
                         tool_results.append({"id": tool_call.id, "content": _tool_content(result)})
 
                 # Collect response text

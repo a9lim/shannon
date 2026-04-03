@@ -581,3 +581,82 @@ async def test_brain_concurrent_inputs_are_serialized():
     expected_roles = ["user", "assistant", "user", "assistant"]
     actual_roles = [msg.role for msg in brain._history]
     assert actual_roles == expected_roles, f"History roles out of order: {actual_roles}"
+
+
+# ---------------------------------------------------------------------------
+# Tool dispatch exception handling
+# ---------------------------------------------------------------------------
+
+
+class RaisingDispatcher:
+    """Dispatcher that raises RuntimeError on every dispatch call."""
+
+    async def dispatch(self, tool_call):
+        raise RuntimeError("Simulated executor failure")
+
+    @staticmethod
+    def is_continue(name):
+        return name == "continue"
+
+    @staticmethod
+    def is_expression(name):
+        return name == "set_expression"
+
+    @staticmethod
+    def is_server_side(name):
+        return name in {"web_search", "web_fetch", "code_execution"}
+
+
+@pytest.mark.asyncio
+async def test_brain_tool_dispatch_exception_returns_error_result():
+    """A failing tool executor must not crash the LLM turn; brain should still produce a response."""
+    tool_call = LLMToolCall(
+        id="call_bash_1",
+        name="bash",
+        arguments={"command": "echo hi"},
+    )
+    # First generate returns a tool call; second returns plain text
+    fake_claude = FakeClaude(text="Done!", tool_calls=[tool_call])
+    bus, brain = _make_brain(fake_claude=fake_claude, fake_dispatcher=RaisingDispatcher())
+
+    llm_responses: list[LLMResponseEvent] = []
+
+    async def capture(event: LLMResponseEvent):
+        llm_responses.append(event)
+
+    bus.subscribe(LLMResponseEvent, capture)
+    await brain.start()
+
+    # Should not raise despite the dispatcher always failing
+    await bus.publish(UserInput(text="Run something", source="text"))
+
+    # Brain must still produce a response (second LLM call after error result)
+    assert len(llm_responses) >= 1
+    assert any(r.text == "Done!" for r in llm_responses)
+
+
+@pytest.mark.asyncio
+async def test_brain_expression_intensity_invalid_string_defaults():
+    """Non-numeric intensity string should default to 0.7 without raising."""
+    expression_call = LLMToolCall(
+        id="call_expr_bad",
+        name="set_expression",
+        arguments={"name": "excited", "intensity": "high"},
+    )
+    fake_claude = FakeClaude(text="So excited!", tool_calls=[expression_call])
+    bus, brain = _make_brain(fake_claude=fake_claude)
+
+    expressions: list[ExpressionChange] = []
+
+    async def capture_expr(event: ExpressionChange):
+        expressions.append(event)
+
+    bus.subscribe(ExpressionChange, capture_expr)
+    await brain.start()
+
+    # Should not raise
+    await bus.publish(UserInput(text="How are you?", source="text"))
+
+    assert len(expressions) == 1
+    assert expressions[0].name == "excited"
+    assert expressions[0].intensity == 0.7
