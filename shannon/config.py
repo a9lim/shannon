@@ -23,7 +23,7 @@ def _clamp(value: float, lo: float, hi: float, name: str, default: float) -> flo
 @dataclass
 class LLMConfig:
     model: str = "claude-opus-4-6"
-    max_tokens: int = 16000
+    max_tokens: int = 8192
     thinking: bool = True
     thinking_budget: int = 4096
     compaction: bool = True
@@ -181,7 +181,7 @@ def _build_defaults() -> ShannonConfig:
     """Build ShannonConfig with defaults, skipping __post_init__ validation."""
     llm = LLMConfig.__new__(LLMConfig)
     llm.model = "claude-opus-4-6"
-    llm.max_tokens = 16000
+    llm.max_tokens = 8192
     llm.thinking = True
     llm.thinking_budget = 4096
     llm.compaction = True

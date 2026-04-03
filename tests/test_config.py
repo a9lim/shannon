@@ -34,7 +34,7 @@ class TestLLMConfigDefaults:
 
     def test_max_tokens_default(self):
         cfg = LLMConfig()
-        assert cfg.max_tokens == 16000
+        assert cfg.max_tokens == 8192
 
     def test_thinking_default(self):
         cfg = LLMConfig()
@@ -251,7 +251,7 @@ class TestLoadConfig:
             tmp_path = f.name
         cfg = load_config(tmp_path)
         assert cfg.llm.model == "claude-sonnet-4-5"
-        assert cfg.llm.max_tokens == 16000
+        assert cfg.llm.max_tokens == 8192
         assert cfg.llm.thinking is True
         assert cfg.tts.type == "piper"
         assert cfg.tools.bash.require_confirmation is True
