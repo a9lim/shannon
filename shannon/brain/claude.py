@@ -12,6 +12,17 @@ from shannon.config import LLMConfig
 logger = logging.getLogger(__name__)
 
 
+def _detect_media_type(image_bytes: bytes) -> str:
+    """Detect image media type from magic bytes. Defaults to image/png."""
+    if image_bytes[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if image_bytes[:4] == b"GIF8":
+        return "image/gif"
+    if image_bytes[:4] == b"RIFF" and len(image_bytes) > 11 and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
 class ClaudeClient:
     """Thin wrapper around the Anthropic SDK for Shannon's brain."""
 
@@ -94,7 +105,7 @@ class ClaudeClient:
                     "type": "image",
                     "source": {
                         "type": "base64",
-                        "media_type": "image/png",
+                        "media_type": _detect_media_type(image_bytes),
                         "data": b64,
                     },
                 })

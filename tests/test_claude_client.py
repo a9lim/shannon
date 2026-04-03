@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shannon.brain.claude import ClaudeClient
+from shannon.brain.claude import ClaudeClient, _detect_media_type
 from shannon.brain.types import LLMMessage, LLMResponse, LLMToolCall
 from shannon.config import LLMConfig
 
@@ -342,3 +342,45 @@ def test_usage_tracking_initial_state():
     client = make_client()
     assert client.total_input_tokens == 0
     assert client.total_output_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# _detect_media_type tests
+# ---------------------------------------------------------------------------
+
+def test_detect_media_type_jpeg():
+    jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+    assert _detect_media_type(jpeg_bytes) == "image/jpeg"
+
+
+def test_detect_media_type_gif():
+    gif_bytes = b"GIF89a" + b"\x00" * 20
+    assert _detect_media_type(gif_bytes) == "image/gif"
+
+
+def test_detect_media_type_webp():
+    webp_bytes = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 20
+    assert _detect_media_type(webp_bytes) == "image/webp"
+
+
+def test_detect_media_type_png_default():
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+    assert _detect_media_type(png_bytes) == "image/png"
+
+
+def test_detect_media_type_unknown_defaults_to_png():
+    random_bytes = b"\x00\x01\x02\x03" + b"\x00" * 20
+    assert _detect_media_type(random_bytes) == "image/png"
+
+
+def test_build_messages_uses_detected_media_type():
+    client = make_client()
+    jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+    messages = [
+        LLMMessage(role="user", content="What is this?", images=[jpeg_bytes]),
+    ]
+    _, api_messages = client._build_messages(messages)
+
+    content = api_messages[0]["content"]
+    img_block = next(b for b in content if b["type"] == "image")
+    assert img_block["source"]["media_type"] == "image/jpeg"
