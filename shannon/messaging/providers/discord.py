@@ -10,6 +10,7 @@ from shannon.messaging.providers.base import MessagingProvider
 logger = logging.getLogger(__name__)
 
 DISCORD_MAX_LENGTH = 2000
+_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 def split_message(text: str) -> list[str]:
@@ -17,7 +18,7 @@ def split_message(text: str) -> list[str]:
 
     Splitting priority: newlines -> sentence boundaries -> spaces -> hard cut.
     """
-    if not text:
+    if not text or not text.strip():
         return []
     if len(text) <= DISCORD_MAX_LENGTH:
         return [text]
@@ -84,6 +85,7 @@ class DiscordProvider(MessagingProvider):
         self._conversation_expiry = conversation_expiry
         self._callback: Callable[..., Coroutine[Any, Any, None]] | None = None
         self._client: Any = None  # discord.Client, typed as Any to avoid hard import at module level
+        self._client_task: Any = None
 
     # ------------------------------------------------------------------
     # MessagingProvider interface
@@ -107,6 +109,11 @@ class DiscordProvider(MessagingProvider):
                 # Download attachments
                 attachments: list[dict] = []
                 for att in message.attachments:
+                    if att.size > _MAX_ATTACHMENT_BYTES:
+                        logger.warning(
+                            "Skipping attachment %s — too large (%d bytes)", att.filename, att.size
+                        )
+                        continue
                     try:
                         data = await att.read()
                         attachments.append({
@@ -159,13 +166,22 @@ class DiscordProvider(MessagingProvider):
                 )
 
         # Start the client in the background without blocking.
-        asyncio.ensure_future(self._client.start(self._token))
+        self._client_task = asyncio.ensure_future(self._client.start(self._token))
+        self._client_task.add_done_callback(self._on_client_done)
 
     async def disconnect(self) -> None:
         """Close the Discord client connection."""
         if self._client is not None:
             await self._client.close()
             self._client = None
+
+    def _on_client_done(self, task: "asyncio.Task[None]") -> None:
+        """Log if the Discord client task exits unexpectedly."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Discord client exited with error: %s", exc)
 
     async def send_message(self, channel: str, text: str, reply_to: str | None = None) -> None:
         """Fetch the channel by ID and send a message, optionally as a reply.

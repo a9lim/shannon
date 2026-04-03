@@ -10,6 +10,9 @@ class TestSplitMessage:
     def test_empty_message(self):
         assert split_message("") == []
 
+    def test_whitespace_only_message(self):
+        assert split_message("   \n\t  ") == []
+
     def test_exactly_2000_chars(self):
         text = "a" * 2000
         assert split_message(text) == [text]
