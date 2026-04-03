@@ -41,7 +41,7 @@ async def test_idle_timeout_triggers():
         enabled=True,
         cooldown_seconds=0,
         triggers=["idle_timeout"],
-        idle_timeout_seconds=0,  # trigger immediately — any idle time counts
+        idle_timeout_seconds=1,  # minimum valid value; trigger after 1s idle
     )
     loop = AutonomyLoop(bus, config)
 
@@ -53,7 +53,7 @@ async def test_idle_timeout_triggers():
     bus.subscribe(AutonomousTrigger, on_trigger)
 
     task = asyncio.create_task(loop.run())
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(1.2)
     loop.stop()
     await task
 
@@ -106,7 +106,7 @@ async def test_cooldown_respected():
         enabled=True,
         cooldown_seconds=60,  # very long cooldown
         triggers=["idle_timeout"],
-        idle_timeout_seconds=0,
+        idle_timeout_seconds=1,  # minimum valid value
     )
     loop = AutonomyLoop(bus, config)
 
@@ -118,7 +118,7 @@ async def test_cooldown_respected():
     bus.subscribe(AutonomousTrigger, on_trigger)
 
     task = asyncio.create_task(loop.run())
-    await asyncio.sleep(0.4)
+    await asyncio.sleep(1.5)
     loop.stop()
     await task
 

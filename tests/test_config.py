@@ -423,3 +423,39 @@ class TestConfigValidation:
         with caplog.at_level(logging.WARNING):
             MessagingConfig(debounce_delay=100.0)
         assert "debounce_delay" in caplog.text
+
+    # BashConfig validation
+    def test_bash_timeout_clamped_to_minimum(self):
+        cfg = BashConfig(timeout_seconds=0)
+        assert cfg.timeout_seconds >= 1
+
+    def test_bash_timeout_negative_clamped(self):
+        cfg = BashConfig(timeout_seconds=-5)
+        assert cfg.timeout_seconds >= 1
+
+    # MemoryConfig validation
+    def test_memory_conversation_window_minimum(self):
+        cfg = MemoryConfig(conversation_window=-1)
+        assert cfg.conversation_window >= 0
+
+    def test_memory_max_continues_minimum(self):
+        cfg = MemoryConfig(max_continues=-1)
+        assert cfg.max_continues >= 0
+
+    # VisionConfig validation
+    def test_vision_interval_minimum(self):
+        cfg = VisionConfig(interval_seconds=0)
+        assert cfg.interval_seconds >= 1.0
+
+    def test_vision_interval_negative(self):
+        cfg = VisionConfig(interval_seconds=-5)
+        assert cfg.interval_seconds >= 1.0
+
+    # AutonomyConfig validation
+    def test_autonomy_cooldown_minimum(self):
+        cfg = AutonomyConfig(cooldown_seconds=-1)
+        assert cfg.cooldown_seconds >= 0
+
+    def test_autonomy_idle_timeout_minimum(self):
+        cfg = AutonomyConfig(idle_timeout_seconds=0)
+        assert cfg.idle_timeout_seconds >= 1

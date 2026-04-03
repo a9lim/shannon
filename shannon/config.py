@@ -58,6 +58,11 @@ class VisionConfig:
     max_width: int = 1024
     max_height: int = 768
 
+    def __post_init__(self) -> None:
+        if self.interval_seconds < 1.0:
+            _log.warning("vision.interval_seconds=%.4g too low; using 1.0", self.interval_seconds)
+            self.interval_seconds = 1.0
+
 
 @dataclass
 class VTuberConfig:
@@ -107,6 +112,9 @@ class BashConfig:
     ])
     timeout_seconds: int = 30
 
+    def __post_init__(self) -> None:
+        self.timeout_seconds = max(1, self.timeout_seconds)
+
 
 @dataclass
 class TextEditorConfig:
@@ -128,6 +136,10 @@ class AutonomyConfig:
     triggers: list[str] = field(default_factory=lambda: ["screen_change", "idle_timeout"])
     idle_timeout_seconds: int = 600
 
+    def __post_init__(self) -> None:
+        self.cooldown_seconds = max(0, self.cooldown_seconds)
+        self.idle_timeout_seconds = max(1, self.idle_timeout_seconds)
+
 
 @dataclass
 class PersonalityConfig:
@@ -141,6 +153,10 @@ class MemoryConfig:
     conversation_window: int = 20
     recall_top_k: int = 5
     max_continues: int = 5
+
+    def __post_init__(self) -> None:
+        self.conversation_window = max(0, self.conversation_window)
+        self.max_continues = max(0, self.max_continues)
 
 
 @dataclass
