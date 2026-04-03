@@ -195,7 +195,7 @@ class Brain:
         max_continues = getattr(self._config.memory, "max_continues", MAX_CONTINUE_DEFAULT)
         all_responses: list[str] = []
         continue_count = 0
-        max_iterations = max_continues + 20  # hard safety cap
+        max_iterations = max_continues + 5  # hard safety cap
 
         # ---- Turn loop (tool results + continue) ----
         for _iteration in range(max_iterations):

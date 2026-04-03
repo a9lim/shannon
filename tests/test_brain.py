@@ -338,6 +338,20 @@ async def test_brain_tool_exhaustion_makes_final_call():
     assert fake_claude.call_count > 1
 
 
+@pytest.mark.asyncio
+async def test_brain_tool_exhaustion_caps_at_lower_iterations():
+    """Tool loop should cap at max_continues + 5, not max_continues + 20."""
+    fake_claude = FakeClaudeToolLoop(final_text="Done.")
+    bus, brain = _make_brain(fake_claude=fake_claude)
+    await brain.start()
+
+    await bus.publish(UserInput(text="Do something", source="text"))
+
+    # max_continues=5, safety margin=5, so max_iterations=10
+    # Plus 1 for the final tool-free call = 11 total
+    assert fake_claude.call_count <= 11
+
+
 class FakeClaudeEmpty:
     """Returns empty text with no tool calls."""
     def __init__(self):
