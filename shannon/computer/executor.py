@@ -13,14 +13,16 @@ except ImportError:
 from shannon.config import ComputerUseConfig
 from shannon.computer.screenshot import ScreenCapture
 
+_MAX_DURATION = 30.0  # seconds — cap for hold_key and wait actions
+
 
 class ComputerUseExecutor:
     """Executes computer use actions dispatched from the computer_20251124 tool.
 
     Args:
         config: ComputerUseConfig from ShannonConfig.
-        display_width: Logical display width presented to the LLM.
-        display_height: Logical display height presented to the LLM.
+        display_width: Logical display width presented to the LLM (fallback if detection fails).
+        display_height: Logical display height presented to the LLM (fallback if detection fails).
     """
 
     def __init__(
@@ -30,7 +32,16 @@ class ComputerUseExecutor:
         display_height: int = 800,
     ) -> None:
         self._config = config
-        self._capture = ScreenCapture(display_width, display_height)
+        actual_width, actual_height = display_width, display_height
+        try:
+            import mss
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]  # primary monitor
+                actual_width = monitor["width"]
+                actual_height = monitor["height"]
+        except Exception:
+            pass
+        self._capture = ScreenCapture(actual_width, actual_height)
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="computer_use")
 
     # ------------------------------------------------------------------
@@ -113,7 +124,7 @@ class ComputerUseExecutor:
         # ---- keyboard ----
         if action == "type":
             text = params.get("text", "")
-            pyautogui.typewrite(text, interval=0.02)
+            pyautogui.write(text, interval=0.02)
             return "OK"
 
         if action == "key":
@@ -160,7 +171,7 @@ class ComputerUseExecutor:
         # ---- hold key ----
         if action == "hold_key":
             key = params.get("text", "")
-            duration = float(params.get("duration", 1.0))
+            duration = min(float(params.get("duration", 1.0)), _MAX_DURATION)
             pyautogui.keyDown(key)
             import time
             time.sleep(duration)
@@ -169,9 +180,13 @@ class ComputerUseExecutor:
 
         # ---- wait ----
         if action == "wait":
-            duration = float(params.get("duration", 1.0))
+            duration = min(float(params.get("duration", 1.0)), _MAX_DURATION)
             import time
             time.sleep(duration)
             return "OK"
 
         return f"Error: unknown action '{action}'"
+
+    def shutdown(self) -> None:
+        """Shut down the thread pool executor."""
+        self._executor.shutdown(wait=False)

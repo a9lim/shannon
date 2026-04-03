@@ -15,9 +15,20 @@ def _config(**kwargs) -> ComputerUseConfig:
     return ComputerUseConfig(**defaults)
 
 
+def _make_executor(width: int = 1280, height: int = 800) -> ComputerUseExecutor:
+    """Create an executor with mss patched to return deterministic screen dimensions."""
+    mock_monitor = {"width": width, "height": height}
+    mock_sct = MagicMock()
+    mock_sct.__enter__ = MagicMock(return_value=mock_sct)
+    mock_sct.__exit__ = MagicMock(return_value=False)
+    mock_sct.monitors = [None, mock_monitor]
+    with patch("mss.mss", return_value=mock_sct):
+        return ComputerUseExecutor(_config(), display_width=width, display_height=height)
+
+
 @pytest.fixture
 def executor():
-    return ComputerUseExecutor(_config(), display_width=1280, display_height=800)
+    return _make_executor(1280, 800)
 
 
 # ---------------------------------------------------------------------------
@@ -55,11 +66,12 @@ async def test_left_click_calls_pyautogui_click(executor):
 # ---------------------------------------------------------------------------
 
 
-async def test_type_calls_pyautogui_typewrite(executor):
-    """type action calls pyautogui.typewrite with the given text."""
+async def test_type_action_uses_write_not_typewrite(executor):
+    """type action calls pyautogui.write (not typewrite) to support Unicode."""
     with patch("shannon.computer.executor.pyautogui") as mock_pg:
         result = await executor.execute({"action": "type", "text": "hello world"})
-    mock_pg.typewrite.assert_called_once_with("hello world", interval=0.02)
+    mock_pg.write.assert_called_once_with("hello world", interval=0.02)
+    mock_pg.typewrite.assert_not_called()
     assert result == "OK"
 
 
@@ -141,3 +153,49 @@ async def test_unknown_action_returns_error(executor):
         assert "error" in result or "unknown" in str(result).lower()
     else:
         assert "unknown" in result.lower() or "unsupported" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# hold_key duration cap
+# ---------------------------------------------------------------------------
+
+
+async def test_hold_key_duration_capped(executor):
+    """hold_key caps sleep duration at _MAX_DURATION (30s) regardless of LLM request."""
+    import shannon.computer.executor as executor_mod
+    slept = []
+    with patch("shannon.computer.executor.pyautogui"):
+        with patch("time.sleep", side_effect=lambda d: slept.append(d)):
+            result = await executor.execute({"action": "hold_key", "text": "a", "duration": 99999})
+    assert result == "OK"
+    assert slept, "time.sleep was never called"
+    assert max(slept) <= executor_mod._MAX_DURATION
+
+
+# ---------------------------------------------------------------------------
+# wait duration cap
+# ---------------------------------------------------------------------------
+
+
+async def test_wait_duration_capped(executor):
+    """wait caps sleep duration at _MAX_DURATION (30s) regardless of LLM request."""
+    import shannon.computer.executor as executor_mod
+    slept = []
+    with patch("shannon.computer.executor.pyautogui"):
+        with patch("time.sleep", side_effect=lambda d: slept.append(d)):
+            result = await executor.execute({"action": "wait", "duration": 99999})
+    assert result == "OK"
+    assert slept, "time.sleep was never called"
+    assert max(slept) <= executor_mod._MAX_DURATION
+
+
+# ---------------------------------------------------------------------------
+# shutdown
+# ---------------------------------------------------------------------------
+
+
+def test_shutdown_calls_executor_shutdown(executor):
+    """shutdown() delegates to the thread pool executor without raising."""
+    with patch.object(executor._executor, "shutdown") as mock_shutdown:
+        executor.shutdown()
+    mock_shutdown.assert_called_once_with(wait=False)
