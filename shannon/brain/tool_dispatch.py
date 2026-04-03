@@ -50,12 +50,10 @@ class ToolDispatcher:
         args = tool_call.arguments
 
         if name == "continue":
-            return "Continuing."
+            return "ok"
 
         if name == "set_expression":
-            expr_name = args.get("name", "neutral")
-            intensity = float(args.get("intensity", 0.7))
-            return f"Expression set to {expr_name} (intensity {intensity})"
+            return "ok"
 
         if name == "bash":
             if self._bash is None:

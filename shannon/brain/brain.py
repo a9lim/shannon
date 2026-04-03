@@ -217,7 +217,7 @@ class Brain:
 
                 if self._dispatcher.is_continue(tool_call.name):
                     wants_continue = True
-                    tool_results.append({"id": tool_call.id, "content": "Continuing."})
+                    tool_results.append({"id": tool_call.id, "content": "ok"})
                 elif self._dispatcher.is_expression(tool_call.name):
                     # Parse expression args and emit event
                     expr_name = tool_call.arguments.get("name", "neutral")

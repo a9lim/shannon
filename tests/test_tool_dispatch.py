@@ -88,23 +88,13 @@ async def test_dispatch_computer_routes_to_computer_executor():
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_set_expression_returns_confirmation():
-    """set_expression returns a formatted confirmation string."""
+async def test_dispatch_set_expression_returns_ok():
+    """set_expression returns 'ok'."""
     dispatcher = _make_dispatcher()
 
     result = await dispatcher.dispatch(_make_call("set_expression", {"name": "happy", "intensity": 0.8}))
 
-    assert result == "Expression set to happy (intensity 0.8)"
-
-
-async def test_dispatch_set_expression_default_intensity():
-    """set_expression uses intensity from arguments."""
-    dispatcher = _make_dispatcher()
-
-    result = await dispatcher.dispatch(_make_call("set_expression", {"name": "sad", "intensity": 0.5}))
-
-    assert "sad" in result
-    assert "0.5" in result
+    assert result == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -112,13 +102,13 @@ async def test_dispatch_set_expression_default_intensity():
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_continue_returns_confirmation():
-    """continue tool returns 'Continuing.'"""
+async def test_dispatch_continue_returns_ok():
+    """continue tool returns 'ok'."""
     dispatcher = _make_dispatcher()
 
     result = await dispatcher.dispatch(_make_call("continue"))
 
-    assert result == "Continuing."
+    assert result == "ok"
 
 
 # ---------------------------------------------------------------------------
