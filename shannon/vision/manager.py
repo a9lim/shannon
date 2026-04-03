@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 from shannon.events import VisionFrame
 
@@ -37,7 +40,7 @@ class VisionManager:
                         VisionFrame(image=image, source=provider.source_name())
                     )
                 except Exception:
-                    pass
+                    logger.debug("Capture failed for %s", provider.source_name(), exc_info=True)
             await asyncio.sleep(self._interval)
 
     def stop(self) -> None:

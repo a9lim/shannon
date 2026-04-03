@@ -38,9 +38,14 @@ class ScreenCapture(VisionProvider):
         return self._mss
 
     async def capture(self) -> bytes:
-        """Capture monitor[0] (the full virtual screen), resize, and return PNG bytes."""
-        import mss.tools
+        """Capture monitor[0], resize, and return PNG bytes (non-blocking)."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._capture_sync)
 
+    def _capture_sync(self) -> bytes:
+        """Synchronous capture implementation."""
+        import mss.tools
         sct = self._get_mss()
         monitor = sct.monitors[0]
         screenshot = sct.grab(monitor)
