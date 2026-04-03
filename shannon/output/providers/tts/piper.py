@@ -48,9 +48,16 @@ class PiperProvider(TTSProvider):
         self._load()
         assert self._voice is not None
 
-        buf = io.BytesIO()
-        import wave  # stdlib
+        import asyncio
 
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._synthesize_sync, text)
+
+    def _synthesize_sync(self, text: str) -> AudioChunk:
+        """Synchronous synthesis — runs in thread pool."""
+        import wave
+
+        buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             self._voice.synthesize(text, wf)  # type: ignore[attr-defined]
 
