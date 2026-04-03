@@ -95,3 +95,43 @@ async def test_unsubscribe():
     bus.unsubscribe(TestEvent, handler)
     await bus.publish(TestEvent())
     assert received == [True]  # No new append
+
+
+async def test_publish_exception_in_handler_does_not_block_others():
+    bus = EventBus()
+    ran = []
+
+    class TestEvent:
+        pass
+
+    async def bad_handler(event: TestEvent):
+        raise RuntimeError("boom")
+
+    async def good_handler(event: TestEvent):
+        ran.append(True)
+
+    bus.subscribe(TestEvent, bad_handler)
+    bus.subscribe(TestEvent, good_handler)
+    await bus.publish(TestEvent())
+
+    assert ran == [True]
+
+
+async def test_publish_handler_mutation_does_not_skip():
+    bus = EventBus()
+    ran = []
+
+    class TestEvent:
+        pass
+
+    async def self_unsubscribing_handler(event: TestEvent):
+        bus.unsubscribe(TestEvent, self_unsubscribing_handler)
+
+    async def second_handler(event: TestEvent):
+        ran.append(True)
+
+    bus.subscribe(TestEvent, self_unsubscribing_handler)
+    bus.subscribe(TestEvent, second_handler)
+    await bus.publish(TestEvent())
+
+    assert ran == [True]

@@ -1,7 +1,10 @@
 """Typed async event bus — publish/subscribe pattern."""
 
+import logging
 from collections import defaultdict
 from typing import Any, Callable, Coroutine
+
+logger = logging.getLogger(__name__)
 
 
 class EventBus:
@@ -23,5 +26,8 @@ class EventBus:
 
     async def publish(self, event: Any) -> None:
         """Publish an event to all subscribers of its type."""
-        for handler in self._subscribers.get(type(event), []):
-            await handler(event)
+        for handler in list(self._subscribers.get(type(event), [])):
+            try:
+                await handler(event)
+            except Exception:
+                logger.exception("Unhandled exception in event handler %r for event %r", handler, event)
