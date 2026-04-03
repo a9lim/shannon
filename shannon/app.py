@@ -286,14 +286,29 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        # Clean up
+        # Cancel all background tasks
         for task in tasks:
             task.cancel()
+        # Wait for cancellations to propagate
+        await asyncio.gather(*tasks, return_exceptions=True)
 
+        # Stop modules
         autonomy_loop.stop()
         vision_manager.stop()
         await bash_executor.close()
         output_manager.stop()
+
+        # Disconnect VTuber
+        if vtuber_provider is not None:
+            try:
+                await vtuber_provider.disconnect()
+            except Exception:
+                logger.debug("Error disconnecting VTuber", exc_info=True)
+
+        # Shut down computer executor
+        if computer_executor is not None:
+            computer_executor.shutdown()
+
         await messaging_manager.stop()
 
         logger.info("%s shutting down.", name)
