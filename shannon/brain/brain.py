@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +29,17 @@ if TYPE_CHECKING:
 
 MAX_CONTINUE_DEFAULT = 5
 
+
+def _tool_content(result: object) -> str | list[dict]:
+    """Normalize a tool executor result for the Anthropic tool_result format.
+
+    Dicts (e.g. screenshot image blocks) are wrapped in a list; everything
+    else is stringified.
+    """
+    if isinstance(result, dict):
+        return [result]
+    return str(result)
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +62,7 @@ class Brain:
         self._history: list[LLMMessage] = []
         self._vision_buffer: list[VisionFrame] = []
         self._prompt_builder: PromptBuilder | None = None
+        self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -167,145 +180,146 @@ class Brain:
         """
         assert self._prompt_builder is not None, "Brain.start() must be called before processing input"
 
-        # Gather vision images for this turn
-        vision_images = [f.image for f in self._vision_buffer]
-        self._vision_buffer.clear()
+        async with self._lock:
+            # Gather vision images for this turn
+            vision_images = [f.image for f in self._vision_buffer]
+            self._vision_buffer.clear()
 
-        # Build system prompt (static for caching)
-        system_prompt = self._prompt_builder.build()
+            # Build system prompt (static for caching)
+            system_prompt = self._prompt_builder.build()
 
-        # Prepend dynamic context (emojis, participants) to user message
-        if dynamic_context:
-            text = f"[Context: {dynamic_context}]\n{text}"
+            # Prepend dynamic context (emojis, participants) to user message
+            if dynamic_context:
+                text = f"[Context: {dynamic_context}]\n{text}"
 
-        # Build messages list
-        messages: list[LLMMessage] = [
-            LLMMessage(role="system", content=system_prompt)
-        ]
-        messages.extend(self._history[-(self._config.memory.conversation_window * 2):])
+            # Build messages list
+            messages: list[LLMMessage] = [
+                LLMMessage(role="system", content=system_prompt)
+            ]
+            messages.extend(self._history[-(self._config.memory.conversation_window * 2):])
 
-        # Current user turn
-        user_msg = LLMMessage(role="user", content=text, images=vision_images + images)
-        messages.append(user_msg)
+            # Current user turn
+            user_msg = LLMMessage(role="user", content=text, images=vision_images + images)
+            messages.append(user_msg)
 
-        # Build tool list and betas from registry
-        tools = self._registry.build(mode=tool_mode)
-        betas = self._registry.beta_headers()
+            # Build tool list and betas from registry
+            tools = self._registry.build(mode=tool_mode)
+            betas = self._registry.beta_headers()
 
-        max_continues = getattr(self._config.memory, "max_continues", MAX_CONTINUE_DEFAULT)
-        all_responses: list[str] = []
-        continue_count = 0
-        max_iterations = max_continues + 5  # hard safety cap
+            max_continues = getattr(self._config.memory, "max_continues", MAX_CONTINUE_DEFAULT)
+            all_responses: list[str] = []
+            continue_count = 0
+            max_iterations = max_continues + 5  # hard safety cap
 
-        # ---- Turn loop (tool results + continue) ----
-        for _iteration in range(max_iterations):
-            logger.debug("Sending %d messages to LLM with %d tools", len(messages), len(tools))
-            llm_response = await self._claude.generate(messages=messages, tools=tools, betas=betas)
-            logger.debug("LLM response text: %s", llm_response.text)
-            logger.debug("LLM tool calls: %s", llm_response.tool_calls)
+            # ---- Turn loop (tool results + continue) ----
+            for _iteration in range(max_iterations):
+                logger.debug("Sending %d messages to LLM with %d tools", len(messages), len(tools))
+                llm_response = await self._claude.generate(messages=messages, tools=tools, betas=betas)
+                logger.debug("LLM response text: %s", llm_response.text)
+                logger.debug("LLM tool calls: %s", llm_response.tool_calls)
 
-            # Process tool calls and collect results
-            expressions: list[dict] = []
-            actions: list[dict] = []
-            tool_results: list[dict[str, str]] = []
-            wants_continue = False
+                # Process tool calls and collect results
+                expressions: list[dict] = []
+                actions: list[dict] = []
+                tool_results: list[dict] = []
+                wants_continue = False
 
-            for tool_call in llm_response.tool_calls:
-                # Skip server-side tools — results are already in the response
-                if self._dispatcher.is_server_side(tool_call.name):
+                for tool_call in llm_response.tool_calls:
+                    # Skip server-side tools — results are already in the response
+                    if self._dispatcher.is_server_side(tool_call.name):
+                        continue
+
+                    if self._dispatcher.is_continue(tool_call.name):
+                        wants_continue = True
+                        tool_results.append({"id": tool_call.id, "content": "ok"})
+                    elif self._dispatcher.is_expression(tool_call.name):
+                        # Parse expression args and emit event
+                        expr_name = tool_call.arguments.get("name", "neutral")
+                        intensity = float(tool_call.arguments.get("intensity", 0.7))
+                        expressions.append({"name": expr_name, "intensity": intensity})
+                        await self._bus.publish(
+                            ExpressionChange(name=expr_name, intensity=intensity)
+                        )
+                        result = await self._dispatcher.dispatch(tool_call)
+                        tool_results.append({"id": tool_call.id, "content": _tool_content(result)})
+                    else:
+                        result = await self._dispatcher.dispatch(tool_call)
+                        tool_results.append({"id": tool_call.id, "content": _tool_content(result)})
+
+                # Collect response text
+                if llm_response.text:
+                    all_responses.append(llm_response.text)
+
+                # Emit LLMResponse event for this turn's text
+                if llm_response.text:
+                    await self._bus.publish(
+                        LLMResponseEvent(
+                            text=llm_response.text,
+                            expressions=expressions,
+                            actions=actions,
+                            mood="neutral",
+                        )
+                    )
+
+                # Server-side tool loop paused — re-send to continue
+                if llm_response.stop_reason == "pause_turn":
+                    messages.append(
+                        LLMMessage(role="assistant", content=llm_response.text)
+                    )
                     continue
 
-                if self._dispatcher.is_continue(tool_call.name):
-                    wants_continue = True
-                    tool_results.append({"id": tool_call.id, "content": "ok"})
-                elif self._dispatcher.is_expression(tool_call.name):
-                    # Parse expression args and emit event
-                    expr_name = tool_call.arguments.get("name", "neutral")
-                    intensity = float(tool_call.arguments.get("intensity", 0.7))
-                    expressions.append({"name": expr_name, "intensity": intensity})
-                    await self._bus.publish(
-                        ExpressionChange(name=expr_name, intensity=intensity)
-                    )
-                    result_text = await self._dispatcher.dispatch(tool_call)
-                    tool_results.append({"id": tool_call.id, "content": str(result_text)})
-                else:
-                    result_text = await self._dispatcher.dispatch(tool_call)
-                    tool_results.append({"id": tool_call.id, "content": str(result_text)})
-
-            # Collect response text
-            if llm_response.text:
-                all_responses.append(llm_response.text)
-
-            # Emit LLMResponse event for this turn's text
-            if llm_response.text:
-                await self._bus.publish(
-                    LLMResponseEvent(
-                        text=llm_response.text,
-                        expressions=expressions,
-                        actions=actions,
-                        mood="neutral",
-                    )
-                )
-
-            # Server-side tool loop paused — re-send to continue
-            if llm_response.stop_reason == "pause_turn":
-                messages.append(
-                    LLMMessage(role="assistant", content=llm_response.text)
-                )
-                continue
-
-            # No tool calls at all — conversation is done
-            if not tool_results:
-                messages.append(LLMMessage(role="assistant", content=llm_response.text))
-                break
-
-            # Feed tool results back to LLM for the next iteration
-            messages.append(
-                LLMMessage(
-                    role="assistant",
-                    content=llm_response.text,
-                    tool_calls=[
-                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                        for tc in llm_response.tool_calls
-                    ],
-                )
-            )
-            messages.append(
-                LLMMessage(role="user", content="", tool_results=tool_results)
-            )
-
-            # Enforce continue cap
-            if wants_continue:
-                continue_count += 1
-                if continue_count > max_continues:
-                    logger.debug("Continue cap reached (%d)", max_continues)
+                # No tool calls at all — conversation is done
+                if not tool_results:
+                    messages.append(LLMMessage(role="assistant", content=llm_response.text))
                     break
 
-        else:
-            # Loop exhausted without breaking — make a final tool-free call
-            logger.debug("Tool loop exhausted after %d iterations, making final call", max_iterations)
-            llm_response = await self._claude.generate(messages=messages, tools=None, betas=betas)
-            if llm_response.text:
-                all_responses.append(llm_response.text)
-                await self._bus.publish(
-                    LLMResponseEvent(
-                        text=llm_response.text,
-                        expressions=[],
-                        actions=[],
-                        mood="neutral",
+                # Feed tool results back to LLM for the next iteration
+                messages.append(
+                    LLMMessage(
+                        role="assistant",
+                        content=llm_response.text,
+                        tool_calls=[
+                            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                            for tc in llm_response.tool_calls
+                        ],
                     )
                 )
+                messages.append(
+                    LLMMessage(role="user", content="", tool_results=tool_results)
+                )
 
-        # ---- Persist to history ----
-        # Store text-only version in history (images are one-time context, not worth replaying)
-        self._history.append(LLMMessage(role="user", content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content)))
-        combined_text = "\n\n".join(all_responses)
-        self._history.append(
-            LLMMessage(role="assistant", content=combined_text)
-        )
-        # Trim history (conversation_window counts message pairs)
-        max_entries = self._config.memory.conversation_window * 2
-        if len(self._history) > max_entries:
-            self._history = self._history[-max_entries:]
+                # Enforce continue cap
+                if wants_continue:
+                    continue_count += 1
+                    if continue_count > max_continues:
+                        logger.debug("Continue cap reached (%d)", max_continues)
+                        break
 
-        return all_responses
+            else:
+                # Loop exhausted without breaking — make a final tool-free call
+                logger.debug("Tool loop exhausted after %d iterations, making final call", max_iterations)
+                llm_response = await self._claude.generate(messages=messages, tools=None, betas=betas)
+                if llm_response.text:
+                    all_responses.append(llm_response.text)
+                    await self._bus.publish(
+                        LLMResponseEvent(
+                            text=llm_response.text,
+                            expressions=[],
+                            actions=[],
+                            mood="neutral",
+                        )
+                    )
+
+            # ---- Persist to history ----
+            # Store text-only version in history (images are one-time context, not worth replaying)
+            self._history.append(LLMMessage(role="user", content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content)))
+            combined_text = "\n\n".join(all_responses)
+            self._history.append(
+                LLMMessage(role="assistant", content=combined_text)
+            )
+            # Trim history (conversation_window counts message pairs)
+            max_entries = self._config.memory.conversation_window * 2
+            if len(self._history) > max_entries:
+                self._history = self._history[-max_entries:]
+
+            return all_responses

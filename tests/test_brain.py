@@ -1,5 +1,7 @@
 """Tests for Brain, PromptBuilder, and LLM provider base types."""
 
+import asyncio
+
 import pytest
 
 from shannon.brain.types import (
@@ -543,3 +545,39 @@ async def test_brain_history_does_not_contain_images():
     # Even after processing, history images should be empty
     for msg in brain._history:
         assert msg.images == [], f"History msg has images: {len(msg.images)} images"
+
+
+class FakeClaudeYielding:
+    """FakeClaude that yields to the event loop once per call, exposing interleaving opportunities."""
+
+    def __init__(self, text="Reply"):
+        self._text = text
+        self.call_count = 0
+
+    async def generate(self, messages, tools=None, betas=None):
+        self.call_count += 1
+        # Yield to the event loop so concurrent coroutines can attempt to interleave
+        await asyncio.sleep(0)
+        return LLMResponse(text=self._text, tool_calls=[], stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_brain_concurrent_inputs_are_serialized():
+    """Concurrent UserInput events must be serialized so history stays in proper alternating order."""
+    fake_claude = FakeClaudeYielding(text="Reply")
+    bus, brain = _make_brain(fake_claude=fake_claude)
+    await brain.start()
+
+    # Fire two UserInput events concurrently
+    await asyncio.gather(
+        bus.publish(UserInput(text="First message", source="text")),
+        bus.publish(UserInput(text="Second message", source="text")),
+    )
+
+    # History must have exactly 4 entries: user, assistant, user, assistant
+    assert len(brain._history) == 4, f"Expected 4 history entries, got {len(brain._history)}"
+
+    # Entries must alternate roles strictly
+    expected_roles = ["user", "assistant", "user", "assistant"]
+    actual_roles = [msg.role for msg in brain._history]
+    assert actual_roles == expected_roles, f"History roles out of order: {actual_roles}"
