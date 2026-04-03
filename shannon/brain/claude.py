@@ -18,6 +18,8 @@ class ClaudeClient:
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
         self._client = anthropic.AsyncAnthropic(api_key=config.api_key or None)
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
 
     # ------------------------------------------------------------------
     # Message building
@@ -215,6 +217,18 @@ class ClaudeClient:
 
         async with self._client.beta.messages.stream(**kwargs) as stream:
             response = await stream.get_final_message()
+
+        input_tokens = getattr(response.usage, "input_tokens", 0)
+        output_tokens = getattr(response.usage, "output_tokens", 0)
+        self.total_input_tokens += input_tokens
+        self.total_output_tokens += output_tokens
+
+        if input_tokens + output_tokens > 5000:
+            logger.info(
+                "Expensive turn: input=%d output=%d (session total: in=%d out=%d)",
+                input_tokens, output_tokens,
+                self.total_input_tokens, self.total_output_tokens,
+            )
 
         logger.debug(
             "Claude API response: stop_reason=%s, usage=%s",
