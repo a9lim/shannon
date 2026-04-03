@@ -176,12 +176,47 @@ def _merge_dataclass(instance: Any, overrides: dict) -> None:
         instance.__post_init__()
 
 
+def _build_defaults() -> ShannonConfig:
+    """Build ShannonConfig with defaults, skipping __post_init__ validation."""
+    llm = LLMConfig.__new__(LLMConfig)
+    llm.model = "claude-opus-4-6"
+    llm.max_tokens = 16000
+    llm.thinking = True
+    llm.compaction = True
+    llm.api_key = ""
+
+    config = ShannonConfig.__new__(ShannonConfig)
+    config.llm = llm
+    config.tools = ToolsConfig()
+    config.tts = TTSConfig()
+    config.stt = STTConfig()
+    config.vision = VisionConfig()
+    config.vtuber = VTuberConfig()
+    config.messaging = MessagingConfig.__new__(MessagingConfig)
+    config.messaging.type = "discord"
+    config.messaging.enabled = False
+    config.messaging.token = ""
+    config.messaging.debounce_delay = 3.0
+    config.messaging.reply_probability = 0.0
+    config.messaging.reaction_probability = 0.0
+    config.messaging.conversation_expiry = 300.0
+    config.messaging.max_context_messages = 20
+    config.messaging.admin_ids = []
+    config.autonomy = AutonomyConfig()
+    config.personality = PersonalityConfig()
+    config.memory = MemoryConfig()
+    return config
+
+
 def load_config(path: str | Path) -> ShannonConfig:
     """Load config from a YAML file, merging over defaults."""
-    config = ShannonConfig()
+    config = _build_defaults()
     path = Path(path)
     if path.exists():
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         _merge_dataclass(config, data)
+    else:
+        # No config file — still need to validate defaults
+        _merge_dataclass(config, {})
     return config
