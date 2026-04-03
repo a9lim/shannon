@@ -529,3 +529,17 @@ async def test_brain_dynamic_context_not_in_system_prompt():
     all_user_content = " ".join(str(m.content) for m in non_system)
     assert "pepe" in all_user_content
     assert "Alice" in all_user_content
+
+
+@pytest.mark.asyncio
+async def test_brain_history_does_not_contain_images():
+    """History entries should not carry image data to avoid bloating context."""
+    fake_claude = FakeClaude(text="I see an image!")
+    bus, brain = _make_brain(fake_claude=fake_claude)
+    await brain.start()
+
+    await bus.publish(UserInput(text="What's this?", source="text"))
+
+    # Even after processing, history images should be empty
+    for msg in brain._history:
+        assert msg.images == [], f"History msg has images: {len(msg.images)} images"

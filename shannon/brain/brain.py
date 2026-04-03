@@ -297,7 +297,8 @@ class Brain:
                 )
 
         # ---- Persist to history ----
-        self._history.append(user_msg)
+        # Store text-only version in history (images are one-time context, not worth replaying)
+        self._history.append(LLMMessage(role="user", content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content)))
         combined_text = "\n\n".join(all_responses)
         self._history.append(
             LLMMessage(role="assistant", content=combined_text)
