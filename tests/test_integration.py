@@ -25,7 +25,7 @@ class FakeDispatcher:
     def is_server_side(name): return name in {"web_search", "web_fetch", "code_execution"}
 
 class FakeRegistry:
-    def build(self): return []
+    def build(self, mode="full"): return []
     def beta_headers(self): return []
 
 async def test_full_pipeline_text_to_response():

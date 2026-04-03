@@ -216,3 +216,45 @@ def test_code_execution_no_max_uses():
     tools = registry.build()
     ce = next(t for t in tools if t.get("name") == "code_execution")
     assert "max_uses" not in ce
+
+
+# ---------------------------------------------------------------------------
+# Test: chat mode
+# ---------------------------------------------------------------------------
+
+def test_build_chat_mode_excludes_server_tools():
+    config = make_config()
+    registry = ToolRegistry(config)
+    tools = registry.build(mode="chat")
+    names = [t.get("name") for t in tools]
+    assert "code_execution" not in names
+    assert "web_search" not in names
+    assert "web_fetch" not in names
+    assert "set_expression" in names
+    assert "continue" in names
+    assert "memory" in names
+
+
+def test_build_chat_mode_excludes_agentic_tools():
+    config = make_config()
+    registry = ToolRegistry(config)
+    tools = registry.build(mode="chat")
+    names = [t.get("name") for t in tools]
+    assert "computer" not in names
+    assert "bash" not in names
+    assert "str_replace_based_edit_tool" not in names
+
+
+def test_build_chat_mode_returns_three_tools():
+    config = make_config()
+    registry = ToolRegistry(config)
+    tools = registry.build(mode="chat")
+    assert len(tools) == 3  # memory, set_expression, continue
+
+
+def test_build_default_mode_is_full():
+    config = make_config()
+    registry = ToolRegistry(config)
+    tools_default = registry.build()
+    tools_full = registry.build(mode="full")
+    assert len(tools_default) == len(tools_full)

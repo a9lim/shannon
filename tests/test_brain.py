@@ -90,7 +90,7 @@ class FakeDispatcher:
 
 
 class FakeRegistry:
-    def build(self):
+    def build(self, mode="full"):
         return [{"type": "bash_20250124", "name": "bash"}]
 
     def beta_headers(self):

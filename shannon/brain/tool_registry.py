@@ -16,38 +16,46 @@ class ToolRegistry:
     def __init__(self, config: ShannonConfig) -> None:
         self._config = config
 
-    def build(self) -> list[dict]:
-        """Return all enabled tools in Anthropic API format."""
+    def build(self, mode: str = "full") -> list[dict]:
+        """Return tools in Anthropic API format.
+
+        Args:
+            mode: "full" for all tools, "chat" for minimal conversational set.
+        """
         tools: list[dict] = []
 
-        # --- Conditionally-included Anthropic-hosted tools ---
+        if mode == "full":
+            # --- Conditionally-included Anthropic-hosted tools ---
 
-        if self._config.tools.computer_use.enabled:
-            tools.append({
-                "type": "computer_20251124",
-                "name": "computer",
-                "display_width_px": _DEFAULT_DISPLAY_WIDTH,
-                "display_height_px": _DEFAULT_DISPLAY_HEIGHT,
-            })
+            if self._config.tools.computer_use.enabled:
+                tools.append({
+                    "type": "computer_20251124",
+                    "name": "computer",
+                    "display_width_px": _DEFAULT_DISPLAY_WIDTH,
+                    "display_height_px": _DEFAULT_DISPLAY_HEIGHT,
+                })
 
-        if self._config.tools.bash.enabled:
-            tools.append({
-                "type": "bash_20250124",
-                "name": "bash",
-            })
+            if self._config.tools.bash.enabled:
+                tools.append({
+                    "type": "bash_20250124",
+                    "name": "bash",
+                })
 
-        if self._config.tools.text_editor.enabled:
-            tools.append({
-                "type": "text_editor_20250728",
-                "name": "str_replace_based_edit_tool",
-            })
+            if self._config.tools.text_editor.enabled:
+                tools.append({
+                    "type": "text_editor_20250728",
+                    "name": "str_replace_based_edit_tool",
+                })
 
-        # --- Always-included Anthropic-hosted tools ---
+            # --- Server-side tools (full mode only) ---
 
-        tools.append({"type": "code_execution_20260120", "name": "code_execution"})
+            tools.append({"type": "code_execution_20260120", "name": "code_execution"})
+            tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
+            tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 3})
+
+        # --- Both modes ---
+
         tools.append({"type": "memory_20250818", "name": "memory"})
-        tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
-        tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 3})
 
         # --- Always-included user-defined tools ---
 

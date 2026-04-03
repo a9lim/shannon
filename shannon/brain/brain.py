@@ -116,7 +116,7 @@ class Brain:
             suffix_parts.append(f"Participants: {', '.join(names)}")
         dynamic_context = "\n".join(suffix_parts)
 
-        responses = await self._process_input(text=text, images=images, dynamic_context=dynamic_context)
+        responses = await self._process_input(text=text, images=images, dynamic_context=dynamic_context, tool_mode="chat")
         for i, response_text in enumerate(responses):
             clean_text, reactions = extract_reactions(response_text)
             if clean_text or reactions:
@@ -147,6 +147,7 @@ class Brain:
         await self._process_input(
             text=f"[Autonomous trigger: {event.reason}] {event.context}",
             images=[],
+            tool_mode="chat",
         )
 
     async def _on_vision_frame(self, event: VisionFrame) -> None:
@@ -158,7 +159,7 @@ class Brain:
     # Core processing
     # ------------------------------------------------------------------
 
-    async def _process_input(self, text: str, images: list[bytes], dynamic_context: str = "") -> list[str]:
+    async def _process_input(self, text: str, images: list[bytes], dynamic_context: str = "", tool_mode: str = "full") -> list[str]:
         """Build context, call LLM, process tool calls, emit events.
 
         Returns a list of response texts. Multiple entries when the LLM uses
@@ -188,7 +189,7 @@ class Brain:
         messages.append(user_msg)
 
         # Build tool list and betas from registry
-        tools = self._registry.build()
+        tools = self._registry.build(mode=tool_mode)
         betas = self._registry.beta_headers()
 
         max_continues = getattr(self._config.memory, "max_continues", MAX_CONTINUE_DEFAULT)
