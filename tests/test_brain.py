@@ -635,6 +635,56 @@ async def test_brain_tool_dispatch_exception_returns_error_result():
     assert any(r.text == "Done!" for r in llm_responses)
 
 
+class FakeClaudePauseTurn:
+    """Simulates pause_turn on first call (server-side tool in progress), then end_turn."""
+    def __init__(self):
+        self.call_count = 0
+        self.messages_per_call = []
+
+    async def generate(self, messages, tools=None, betas=None):
+        self.call_count += 1
+        self.messages_per_call.append(list(messages))
+        if self.call_count == 1:
+            return LLMResponse(
+                text="thinking...",
+                tool_calls=[LLMToolCall(id="st1", name="web_search", arguments={"query": "test"})],
+                stop_reason="pause_turn",
+            )
+        return LLMResponse(text="done", tool_calls=[], stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_brain_pause_turn_preserves_tool_calls():
+    """pause_turn must include tool_use blocks in the assistant message for API continuity."""
+    fake_claude = FakeClaudePauseTurn()
+    bus, brain = _make_brain(fake_claude=fake_claude)
+
+    llm_responses: list[LLMResponseEvent] = []
+
+    async def capture(event: LLMResponseEvent):
+        llm_responses.append(event)
+
+    bus.subscribe(LLMResponseEvent, capture)
+    await brain.start()
+
+    await bus.publish(UserInput(text="Search for something", source="text"))
+
+    # generate should have been called twice: once pause_turn, once end_turn
+    assert fake_claude.call_count == 2
+
+    # The second call's messages must include an assistant message with tool_calls
+    second_call_messages = fake_claude.messages_per_call[1]
+    assistant_msgs = [m for m in second_call_messages if m.role == "assistant"]
+    assert len(assistant_msgs) >= 1
+    # The assistant message added after pause_turn should carry the tool call
+    pause_assistant = assistant_msgs[-1]
+    assert len(pause_assistant.tool_calls) == 1
+    assert pause_assistant.tool_calls[0]["name"] == "web_search"
+
+    # Brain should have produced output (from both turns)
+    assert any(r.text for r in llm_responses)
+
+
 @pytest.mark.asyncio
 async def test_brain_expression_intensity_invalid_string_defaults():
     """Non-numeric intensity string should default to 0.7 without raising."""

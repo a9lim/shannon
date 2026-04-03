@@ -279,9 +279,25 @@ class Brain:
 
                 # Server-side tool loop paused — re-send to continue
                 if llm_response.stop_reason == "pause_turn":
-                    messages.append(
-                        LLMMessage(role="assistant", content=llm_response.text)
-                    )
+                    if llm_response.tool_calls:
+                        messages.append(
+                            LLMMessage(
+                                role="assistant",
+                                content=llm_response.text,
+                                tool_calls=[
+                                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                                    for tc in llm_response.tool_calls
+                                ],
+                            )
+                        )
+                        if tool_results:
+                            messages.append(
+                                LLMMessage(role="user", content="", tool_results=tool_results)
+                            )
+                    else:
+                        messages.append(
+                            LLMMessage(role="assistant", content=llm_response.text)
+                        )
                     continue
 
                 # No tool calls at all — conversation is done
