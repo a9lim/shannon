@@ -198,10 +198,7 @@ class ClaudeClient:
             kwargs["betas"] = betas
 
         if self._config.thinking:
-            kwargs["thinking"] = {
-                "type": "adaptive",
-                "budget_tokens": self._config.thinking_budget,
-            }
+            kwargs["thinking"] = {"type": "adaptive"}
 
         if self._config.compaction:
             kwargs["context_management"] = {

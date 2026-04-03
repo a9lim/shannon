@@ -273,12 +273,6 @@ class TestNormalizeMessages:
         assert len(api_messages) == 2
 
 
-def test_generate_kwargs_include_thinking_budget():
-    client = make_client(thinking=True, thinking_budget=2048)
-    assert client._config.thinking_budget == 2048
-    assert client._config.thinking is True
-
-
 def test_usage_tracking_initial_state():
     client = make_client()
     assert client.total_input_tokens == 0

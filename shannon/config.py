@@ -25,7 +25,6 @@ class LLMConfig:
     model: str = "claude-sonnet-4-5-20250514"
     max_tokens: int = 8192
     thinking: bool = True
-    thinking_budget: int = 4096
     compaction: bool = True
     api_key: str = ""
 
@@ -185,7 +184,7 @@ def _build_defaults() -> ShannonConfig:
     llm.model = "claude-sonnet-4-5-20250514"
     llm.max_tokens = 8192
     llm.thinking = True
-    llm.thinking_budget = 4096
+
     llm.compaction = True
     llm.api_key = ""
 
