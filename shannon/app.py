@@ -78,11 +78,9 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     # ------------------------------------------------------------------
     from shannon.tools.bash_executor import BashExecutor
     from shannon.tools.text_editor_executor import TextEditorExecutor
-    from shannon.tools.memory_backend import MemoryBackend
 
     bash_executor = BashExecutor(config.tools.bash)
     text_editor_executor = TextEditorExecutor(config.tools.text_editor)
-    memory_backend = MemoryBackend(config.memory.dir)
 
     # Computer use (optional — needs pyautogui)
     computer_executor = None
@@ -103,7 +101,6 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         computer_executor=computer_executor,
         bash_executor=bash_executor,
         text_editor_executor=text_editor_executor,
-        memory_backend=memory_backend,
     )
     registry = ToolRegistry(config)
 

@@ -20,13 +20,11 @@ def _make_dispatcher(
     computer=None,
     bash=None,
     text_editor=None,
-    memory=None,
 ) -> ToolDispatcher:
     return ToolDispatcher(
         computer_executor=computer,
         bash_executor=bash,
         text_editor_executor=text_editor,
-        memory_backend=memory,
     )
 
 
@@ -59,16 +57,15 @@ async def test_dispatch_text_editor_routes_to_text_editor_executor():
     assert result == "edit result"
 
 
-async def test_dispatch_memory_routes_to_memory_backend():
-    """memory tool is routed to memory_backend.execute."""
-    memory = MagicMock()
-    memory.execute = MagicMock(return_value="memory result")
-    dispatcher = _make_dispatcher(memory=memory)
+async def test_memory_is_server_side():
+    """memory tool is server-side — is_server_side returns True and dispatch is never called locally."""
+    assert ToolDispatcher.is_server_side("memory") is True
 
+    # Dispatching memory locally should never happen, but if it did the tool
+    # falls through to the unknown-tool handler rather than a dedicated branch.
+    dispatcher = _make_dispatcher()
     result = await dispatcher.dispatch(_make_call("memory", {"command": "view", "path": "/memories"}))
-
-    memory.execute.assert_called_once_with({"command": "view", "path": "/memories"})
-    assert result == "memory result"
+    assert "Unknown tool" in result
 
 
 async def test_dispatch_computer_routes_to_computer_executor():
@@ -175,6 +172,7 @@ def test_is_server_side_true():
     assert ToolDispatcher.is_server_side("web_search") is True
     assert ToolDispatcher.is_server_side("web_fetch") is True
     assert ToolDispatcher.is_server_side("code_execution") is True
+    assert ToolDispatcher.is_server_side("memory") is True
 
 
 def test_is_server_side_false():
