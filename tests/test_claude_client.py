@@ -233,8 +233,9 @@ class TestNormalizeMessages:
         _, api_messages = client._build_messages(messages)
         assert len(api_messages) == 1
         assert api_messages[0]["role"] == "user"
-        assert "Hello" in api_messages[0]["content"]
-        assert "How are you?" in api_messages[0]["content"]
+        texts = [b["text"] for b in api_messages[0]["content"] if b["type"] == "text"]
+        assert "Hello" in texts
+        assert "How are you?" in texts
 
     def test_consecutive_assistant_messages_merged(self):
         client = make_client()
@@ -247,8 +248,9 @@ class TestNormalizeMessages:
         assert len(api_messages) == 2
         assert api_messages[0]["role"] == "user"
         assert api_messages[1]["role"] == "assistant"
-        assert "Hello!" in api_messages[1]["content"]
-        assert "How can I help?" in api_messages[1]["content"]
+        texts = [b["text"] for b in api_messages[1]["content"] if b["type"] == "text"]
+        assert "Hello!" in texts
+        assert "How can I help?" in texts
 
     def test_alternating_messages_unchanged(self):
         client = make_client()
@@ -260,8 +262,8 @@ class TestNormalizeMessages:
         _, api_messages = client._build_messages(messages)
         assert len(api_messages) == 3
 
-    def test_normalization_skips_non_string_content(self):
-        """Content blocks (from compaction) should not be merged."""
+    def test_normalization_merges_list_and_string_content(self):
+        """Content blocks (from compaction) followed by string should merge."""
         client = make_client()
         blocks = [{"type": "text", "text": "compacted"}]
         messages = [
@@ -269,8 +271,71 @@ class TestNormalizeMessages:
             LLMMessage(role="assistant", content="More text"),
         ]
         _, api_messages = client._build_messages(messages)
-        # Non-string content can't be merged — should remain separate
-        assert len(api_messages) == 2
+        # Mixed content types are now merged into a single block list
+        assert len(api_messages) == 1
+        assert api_messages[0]["role"] == "assistant"
+        combined = api_messages[0]["content"]
+        assert isinstance(combined, list)
+        texts = [b["text"] for b in combined if b["type"] == "text"]
+        assert "compacted" in texts
+        assert "More text" in texts
+
+    def test_normalize_messages_merges_list_and_string_same_role(self):
+        """Two consecutive user messages: list content then string content merge correctly."""
+        tool_result_block = {"type": "tool_result", "tool_use_id": "tu_1", "content": "done"}
+        msgs = [
+            {"role": "user", "content": [tool_result_block]},
+            {"role": "user", "content": "Follow-up question"},
+        ]
+        result = ClaudeClient._normalize_messages(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert isinstance(result[0]["content"], list)
+        assert tool_result_block in result[0]["content"]
+        assert {"type": "text", "text": "Follow-up question"} in result[0]["content"]
+
+    def test_normalize_messages_merges_string_and_list_same_role(self):
+        """Two consecutive user messages: string content then list content merge correctly."""
+        tool_result_block = {"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}
+        msgs = [
+            {"role": "user", "content": "Initial message"},
+            {"role": "user", "content": [tool_result_block]},
+        ]
+        result = ClaudeClient._normalize_messages(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert isinstance(result[0]["content"], list)
+        assert {"type": "text", "text": "Initial message"} in result[0]["content"]
+        assert tool_result_block in result[0]["content"]
+
+    def test_normalize_messages_still_merges_two_strings(self):
+        """Backward compatibility: two consecutive string-content messages still merge."""
+        msgs = [
+            {"role": "user", "content": "Hello"},
+            {"role": "user", "content": "How are you?"},
+        ]
+        result = ClaudeClient._normalize_messages(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        combined = result[0]["content"]
+        assert isinstance(combined, list)
+        texts = [b["text"] for b in combined if b["type"] == "text"]
+        assert "Hello" in texts
+        assert "How are you?" in texts
+
+    def test_normalize_messages_empty_content_merged(self):
+        """Two consecutive user messages where one has empty string content merge without error."""
+        msgs = [
+            {"role": "user", "content": ""},
+            {"role": "user", "content": "Non-empty message"},
+        ]
+        result = ClaudeClient._normalize_messages(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        # empty string produces no blocks, only the non-empty message block remains
+        combined = result[0]["content"]
+        assert isinstance(combined, list)
+        assert {"type": "text", "text": "Non-empty message"} in combined
 
 
 def test_usage_tracking_initial_state():

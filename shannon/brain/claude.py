@@ -112,25 +112,25 @@ class ClaudeClient:
 
     @staticmethod
     def _normalize_messages(api_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge consecutive same-role messages to ensure strict alternation.
-
-        Only merges messages where both have string content.
-        """
+        """Merge consecutive same-role messages to ensure strict alternation."""
         if not api_messages:
             return api_messages
+
+        def _to_blocks(content: Any) -> list[dict[str, Any]]:
+            if isinstance(content, list):
+                return content
+            if isinstance(content, str) and content:
+                return [{"type": "text", "text": content}]
+            return []
 
         merged: list[dict[str, Any]] = [api_messages[0]]
         for msg in api_messages[1:]:
             prev = merged[-1]
-            if (
-                prev["role"] == msg["role"]
-                and isinstance(prev["content"], str)
-                and isinstance(msg["content"], str)
-            ):
-                merged[-1] = {
-                    "role": msg["role"],
-                    "content": prev["content"] + "\n" + msg["content"],
-                }
+            if prev["role"] == msg["role"]:
+                prev_blocks = _to_blocks(prev["content"])
+                new_blocks = _to_blocks(msg["content"])
+                combined = prev_blocks + new_blocks
+                merged[-1] = {"role": msg["role"], "content": combined if combined else ""}
             else:
                 merged.append(msg)
 
