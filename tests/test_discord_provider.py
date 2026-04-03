@@ -79,3 +79,27 @@ class TestSplitMessageSentenceBoundary:
         assert len(chunks) >= 2
         # All chunks within limit
         assert all(len(c) <= 2000 for c in chunks)
+
+
+def test_get_guild_emojis_caps_at_50():
+    """Guild emoji list should be capped at 50 entries."""
+    from shannon.messaging.providers.discord import DiscordProvider
+    from unittest.mock import MagicMock
+
+    provider = DiscordProvider(token="test-token")
+    guild = MagicMock()
+    emojis = []
+    for i in range(200):
+        e = MagicMock()
+        e.name = f"emoji{i}"
+        e.available = True
+        emojis.append(e)
+    guild.emojis = emojis
+
+    result = provider._get_guild_emojis(guild)
+    # Should contain at most 50 emoji names (100 colons) plus 1 from the "emojis:" prefix
+    count = result.count(":")
+    assert count <= 101  # 50 emojis * 2 colons each + 1 from "emojis:" prefix
+    assert "emoji0" in result
+    assert "emoji49" in result
+    assert "emoji50" not in result

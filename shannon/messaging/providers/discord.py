@@ -219,14 +219,17 @@ class DiscordProvider(MessagingProvider):
         except Exception:
             pass
 
+    _MAX_EMOJIS = 50
+
     def _get_guild_emojis(self, guild) -> str:
-        """Build a string listing available custom emoji for the system prompt."""
+        """Build a string listing available custom emoji for context."""
         if not guild or not guild.emojis:
             return ""
         names = [f":{e.name}:" for e in guild.emojis if e.available]
         if not names:
             return ""
-        return f"Available custom emojis in this server: {', '.join(names)}"
+        names = names[:self._MAX_EMOJIS]
+        return f"Custom emojis: {', '.join(names)}"
 
     async def _is_in_conversation(self, channel, expiry: float) -> bool:
         """Check if the bot recently replied in this channel by inspecting Discord history."""
