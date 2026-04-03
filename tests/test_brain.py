@@ -686,6 +686,45 @@ async def test_brain_pause_turn_preserves_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_brain_conversation_window_zero_means_no_history():
+    """conversation_window=0 should mean stateless — no history included in subsequent calls."""
+
+    class CapturingClaude:
+        def __init__(self):
+            self.call_count = 0
+            self.all_messages = []
+
+        async def generate(self, messages, tools=None, betas=None):
+            self.call_count += 1
+            self.all_messages.append(list(messages))
+            return LLMResponse(text="Reply", tool_calls=[], stop_reason="end_turn")
+
+    capturing_claude = CapturingClaude()
+    config = ShannonConfig()
+    config.memory.conversation_window = 0
+    bus = EventBus()
+    dispatcher = FakeDispatcher()
+    registry = FakeRegistry()
+    brain = Brain(bus=bus, claude=capturing_claude, dispatcher=dispatcher, registry=registry, config=config)
+    await brain.start()
+
+    await bus.publish(UserInput(text="First message", source="text"))
+    await bus.publish(UserInput(text="Second message", source="text"))
+
+    assert capturing_claude.call_count == 2
+
+    # Second call should have only system prompt + current user message (no history)
+    second_call_messages = capturing_claude.all_messages[1]
+    assert len(second_call_messages) == 2, (
+        f"Expected 2 messages (system + user) but got {len(second_call_messages)}: "
+        f"{[m.role for m in second_call_messages]}"
+    )
+    assert second_call_messages[0].role == "system"
+    assert second_call_messages[1].role == "user"
+    assert second_call_messages[1].content == "Second message"
+
+
+@pytest.mark.asyncio
 async def test_brain_expression_intensity_invalid_string_defaults():
     """Non-numeric intensity string should default to 0.7 without raising."""
     expression_call = LLMToolCall(

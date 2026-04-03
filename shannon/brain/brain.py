@@ -196,7 +196,8 @@ class Brain:
             messages: list[LLMMessage] = [
                 LLMMessage(role="system", content=system_prompt)
             ]
-            messages.extend(self._history[-(self._config.memory.conversation_window * 2):])
+            if self._config.memory.conversation_window > 0:
+                messages.extend(self._history[-(self._config.memory.conversation_window * 2):])
 
             # Current user turn
             user_msg = LLMMessage(role="user", content=text, images=vision_images + images)
@@ -351,7 +352,7 @@ class Brain:
             )
             # Trim history (conversation_window counts message pairs)
             max_entries = self._config.memory.conversation_window * 2
-            if len(self._history) > max_entries:
+            if max_entries > 0 and len(self._history) > max_entries:
                 self._history = self._history[-max_entries:]
 
             return all_responses
