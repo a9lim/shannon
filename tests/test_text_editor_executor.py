@@ -194,3 +194,42 @@ def test_insert_file_not_found(executor, tmp_path):
         "insert_text": "new line\n",
     })
     assert result == f"The path {missing} does not exist. Please provide a valid path."
+
+
+def test_insert_adds_trailing_newline(executor, tmp_path):
+    """Insert without trailing newline should not merge with next line."""
+    f = tmp_path / "newline.txt"
+    f.write_text("line1\nline2\nline3\n")
+    executor.execute({
+        "command": "insert",
+        "path": str(f),
+        "insert_line": 1,
+        "insert_text": "inserted",  # no trailing newline
+    })
+    lines = f.read_text().splitlines()
+    assert lines[1] == "inserted"
+    assert lines[2] == "line2"
+
+
+def test_view_range_single_element_returns_error(executor, tmp_path):
+    """view_range with only one element should return an error."""
+    f = tmp_path / "single.txt"
+    f.write_text("a\nb\nc\n")
+    result = executor.execute({"command": "view", "path": str(f), "view_range": [1]})
+    assert "error" in result.lower()
+
+
+def test_view_range_start_greater_than_end_returns_error(executor, tmp_path):
+    """view_range where start > end should return an error."""
+    f = tmp_path / "badrange.txt"
+    f.write_text("a\nb\nc\nd\ne\n")
+    result = executor.execute({"command": "view", "path": str(f), "view_range": [5, 2]})
+    assert "error" in result.lower() or "invalid" in result.lower()
+
+
+def test_view_range_start_zero_returns_error(executor, tmp_path):
+    """view_range where start < 1 should return an error."""
+    f = tmp_path / "zerostart.txt"
+    f.write_text("a\nb\nc\n")
+    result = executor.execute({"command": "view", "path": str(f), "view_range": [0, 5]})
+    assert "error" in result.lower()

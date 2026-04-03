@@ -58,7 +58,11 @@ class TextEditorExecutor:
         all_lines = content.splitlines(keepends=True)
 
         if view_range is not None:
+            if len(view_range) < 2:
+                return "Error: view_range must have exactly 2 elements [start, end]."
             start, end = view_range[0], view_range[1]
+            if start < 1 or start > end:
+                return f"Error: invalid view_range [{start}, {end}]. Start must be >= 1 and <= end."
             # 1-indexed, inclusive
             selected = all_lines[start - 1:end]
             numbered = "".join(
@@ -136,6 +140,8 @@ class TextEditorExecutor:
 
         # insert_line is 1-indexed; insert after that line.
         # insert_line=0 means insert before everything.
+        if insert_text and not insert_text.endswith("\n"):
+            insert_text += "\n"
         lines.insert(insert_line, insert_text)
         p.write_text("".join(lines))
         return f"Text inserted at line {insert_line} in {path}"
