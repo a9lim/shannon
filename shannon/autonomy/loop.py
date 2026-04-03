@@ -20,6 +20,7 @@ class AutonomyLoop:
         self._last_input_time = time.time()
         self._last_frame_hash = ""
         self._latest_frame: VisionFrame | None = None
+        self._last_checked_frame: VisionFrame | None = None
 
     async def run(self) -> None:
         """Start the autonomy loop. Returns immediately if autonomy is disabled."""
@@ -30,11 +31,13 @@ class AutonomyLoop:
         self._bus.subscribe(UserInput, self._on_user_input)
         while self._running:
             await self._evaluate()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1.0)
 
     def stop(self) -> None:
         """Stop the autonomy loop."""
         self._running = False
+        self._bus.unsubscribe(VisionFrame, self._on_vision_frame)
+        self._bus.unsubscribe(UserInput, self._on_user_input)
 
     async def _on_vision_frame(self, event: VisionFrame) -> None:
         self._latest_frame = event
@@ -68,14 +71,15 @@ class AutonomyLoop:
 
         # Check screen_change trigger
         if "screen_change" in triggers and self._latest_frame is not None:
-            frame_hash = hashlib.md5(self._latest_frame.image).hexdigest()
-            if frame_hash != self._last_frame_hash and self._last_frame_hash != "":
-                self._last_trigger_time = now
+            if self._latest_frame is not self._last_checked_frame:
+                self._last_checked_frame = self._latest_frame
+                frame_hash = hashlib.md5(self._latest_frame.image).hexdigest()
+                if frame_hash != self._last_frame_hash and self._last_frame_hash != "":
+                    self._last_trigger_time = now
+                    self._last_frame_hash = frame_hash
+                    await self._bus.publish(AutonomousTrigger(
+                        reason="screen_change",
+                        context=f"Screen content changed (hash: {frame_hash[:8]})",
+                    ))
+                    return
                 self._last_frame_hash = frame_hash
-                await self._bus.publish(AutonomousTrigger(
-                    reason="screen_change",
-                    context=f"Screen content changed (hash: {frame_hash[:8]})",
-                ))
-                return
-            # Update hash without triggering (first frame or same content)
-            self._last_frame_hash = frame_hash

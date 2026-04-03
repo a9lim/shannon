@@ -85,11 +85,11 @@ async def test_screen_change_triggers():
 
     # Publish first frame — sets baseline hash, no trigger
     await bus.publish(VisionFrame(image=b"frame-one", source="screen"))
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(1.1)  # wait for poll tick to process baseline frame
 
     # Publish second frame with different content — should trigger
     await bus.publish(VisionFrame(image=b"frame-two", source="screen"))
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(1.1)  # wait for poll tick to detect change
 
     loop.stop()
     await task
