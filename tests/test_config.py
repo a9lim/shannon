@@ -141,7 +141,7 @@ class TestOtherConfigDefaults:
     def test_memory_defaults(self):
         cfg = MemoryConfig()
         assert cfg.dir == "memory"
-        assert cfg.conversation_window == 50
+        assert cfg.conversation_window == 20
         assert cfg.recall_top_k == 5
 
 

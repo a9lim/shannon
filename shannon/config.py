@@ -137,7 +137,7 @@ class PersonalityConfig:
 @dataclass
 class MemoryConfig:
     dir: str = "memory"
-    conversation_window: int = 50
+    conversation_window: int = 20
     recall_top_k: int = 5
     max_continues: int = 5
 
