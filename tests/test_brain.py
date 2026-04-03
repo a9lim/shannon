@@ -449,7 +449,7 @@ def test_prompt_builder():
 
     prompt = builder.build()
     assert personality in prompt
-    assert "Response Format" in prompt
+    assert "Response Format" not in prompt
 
     memory_context = "## What I Remember\n- [facts] The user likes cats."
     prompt_with_memory = builder.build(memory_context=memory_context)
@@ -459,3 +459,59 @@ def test_prompt_builder():
     prompt_with_summary = builder.build(conversation_summary=summary)
     assert summary in prompt_with_summary
     assert "Earlier Conversation Summary" in prompt_with_summary
+
+
+class FakeClaudeCapturing:
+    """FakeClaude that captures messages for inspection."""
+    def __init__(self, text="Hello!", tool_calls=None):
+        self._text = text
+        self._tool_calls = tool_calls or []
+        self.call_count = 0
+        self.last_messages = None
+
+    async def generate(self, messages, tools=None, betas=None):
+        self.call_count += 1
+        self.last_messages = messages
+        if self.call_count == 1:
+            return LLMResponse(text=self._text, tool_calls=self._tool_calls, stop_reason="end_turn")
+        return LLMResponse(text=self._text, tool_calls=[], stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_brain_dynamic_context_not_in_system_prompt():
+    """Dynamic content (emojis, participants) should be in user message, not system prompt."""
+    fake_claude = FakeClaudeCapturing(text="Hi!")
+    bus = EventBus()
+    dispatcher = FakeDispatcher()
+    registry = FakeRegistry()
+    config = ShannonConfig()
+    brain = Brain(bus=bus, claude=fake_claude, dispatcher=dispatcher, registry=registry, config=config)
+
+    chat_responses: list[ChatResponse] = []
+    async def capture(event: ChatResponse):
+        chat_responses.append(event)
+    bus.subscribe(ChatResponse, capture)
+    await brain.start()
+
+    msg = ChatMessage(
+        text="Hello!",
+        author="user",
+        platform="discord",
+        channel="general",
+        message_id="msg_1",
+        custom_emojis="Custom emojis: :pepe:, :sadge:",
+        participants={"123": "Alice", "456": "Bob"},
+    )
+    await bus.publish(msg)
+
+    # System prompt (first message) should NOT contain emoji or participant info
+    system_msg = fake_claude.last_messages[0]
+    assert system_msg.role == "system"
+    assert "pepe" not in str(system_msg.content)
+    assert "Alice" not in str(system_msg.content)
+
+    # The user message should contain the dynamic info
+    non_system = [m for m in fake_claude.last_messages if m.role == "user"]
+    all_user_content = " ".join(str(m.content) for m in non_system)
+    assert "pepe" in all_user_content
+    assert "Alice" in all_user_content

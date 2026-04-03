@@ -114,9 +114,9 @@ class Brain:
                 else:
                     names.append(display_name)
             suffix_parts.append(f"Participants: {', '.join(names)}")
-        system_suffix = "\n".join(suffix_parts)
+        dynamic_context = "\n".join(suffix_parts)
 
-        responses = await self._process_input(text=text, images=images, system_suffix=system_suffix)
+        responses = await self._process_input(text=text, images=images, dynamic_context=dynamic_context)
         for i, response_text in enumerate(responses):
             clean_text, reactions = extract_reactions(response_text)
             if clean_text or reactions:
@@ -158,7 +158,7 @@ class Brain:
     # Core processing
     # ------------------------------------------------------------------
 
-    async def _process_input(self, text: str, images: list[bytes], system_suffix: str = "") -> list[str]:
+    async def _process_input(self, text: str, images: list[bytes], dynamic_context: str = "") -> list[str]:
         """Build context, call LLM, process tool calls, emit events.
 
         Returns a list of response texts. Multiple entries when the LLM uses
@@ -170,8 +170,12 @@ class Brain:
         vision_images = [f.image for f in self._vision_buffer]
         self._vision_buffer.clear()
 
-        # Build system prompt
-        system_prompt = self._prompt_builder.build(suffix=system_suffix)
+        # Build system prompt (static for caching)
+        system_prompt = self._prompt_builder.build()
+
+        # Prepend dynamic context (emojis, participants) to user message
+        if dynamic_context:
+            text = f"[Context: {dynamic_context}]\n{text}"
 
         # Build messages list
         messages: list[LLMMessage] = [
