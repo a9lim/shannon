@@ -130,8 +130,8 @@ class TestOtherConfigDefaults:
     def test_autonomy_defaults(self):
         cfg = AutonomyConfig()
         assert cfg.enabled is True
-        assert cfg.cooldown_seconds == 30
-        assert cfg.idle_timeout_seconds == 120
+        assert cfg.cooldown_seconds == 120
+        assert cfg.idle_timeout_seconds == 600
 
     def test_personality_defaults(self):
         cfg = PersonalityConfig()
@@ -295,7 +295,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.autonomy.cooldown_seconds == 60
         assert cfg.autonomy.enabled is False
-        assert cfg.autonomy.idle_timeout_seconds == 120
+        assert cfg.autonomy.idle_timeout_seconds == 600
 
     def test_override_memory(self):
         data = {"memory": {"conversation_window": 100}}

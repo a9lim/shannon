@@ -123,9 +123,9 @@ class ToolsConfig:
 @dataclass
 class AutonomyConfig:
     enabled: bool = True
-    cooldown_seconds: int = 30
+    cooldown_seconds: int = 120
     triggers: list[str] = field(default_factory=lambda: ["screen_change", "idle_timeout"])
-    idle_timeout_seconds: int = 120
+    idle_timeout_seconds: int = 600
 
 
 @dataclass
