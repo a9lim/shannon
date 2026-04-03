@@ -30,7 +30,7 @@ from shannon.config import (
 class TestLLMConfigDefaults:
     def test_model_default(self):
         cfg = LLMConfig()
-        assert cfg.model == "claude-opus-4-6"
+        assert cfg.model == "claude-sonnet-4-5-20250514"
 
     def test_max_tokens_default(self):
         cfg = LLMConfig()
@@ -229,7 +229,7 @@ class TestLoadConfig:
     def test_load_nonexistent_returns_defaults(self):
         cfg = load_config("/nonexistent/path/config.yaml")
         assert isinstance(cfg, ShannonConfig)
-        assert cfg.llm.model == "claude-opus-4-6"
+        assert cfg.llm.model == "claude-sonnet-4-5-20250514"
         assert cfg.tools.bash.require_confirmation is True
 
     def test_load_empty_yaml_returns_defaults(self):
@@ -237,7 +237,7 @@ class TestLoadConfig:
             f.write("")
             tmp_path = f.name
         cfg = load_config(tmp_path)
-        assert cfg.llm.model == "claude-opus-4-6"
+        assert cfg.llm.model == "claude-sonnet-4-5-20250514"
         assert cfg.tools.bash.require_confirmation is True
 
     def test_partial_override_preserves_defaults(self):

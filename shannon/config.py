@@ -22,7 +22,7 @@ def _clamp(value: float, lo: float, hi: float, name: str, default: float) -> flo
 
 @dataclass
 class LLMConfig:
-    model: str = "claude-opus-4-6"
+    model: str = "claude-sonnet-4-5-20250514"
     max_tokens: int = 8192
     thinking: bool = True
     thinking_budget: int = 4096
@@ -182,7 +182,7 @@ def _merge_dataclass(instance: Any, overrides: dict) -> None:
 def _build_defaults() -> ShannonConfig:
     """Build ShannonConfig with defaults, skipping __post_init__ validation."""
     llm = LLMConfig.__new__(LLMConfig)
-    llm.model = "claude-opus-4-6"
+    llm.model = "claude-sonnet-4-5-20250514"
     llm.max_tokens = 8192
     llm.thinking = True
     llm.thinking_budget = 4096
