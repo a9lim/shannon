@@ -40,6 +40,10 @@ class TestLLMConfigDefaults:
         cfg = LLMConfig()
         assert cfg.thinking is True
 
+    def test_thinking_budget_default(self):
+        cfg = LLMConfig()
+        assert cfg.thinking_budget == 4096
+
     def test_compaction_default(self):
         cfg = LLMConfig()
         assert cfg.compaction is True

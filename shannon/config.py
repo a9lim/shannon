@@ -25,6 +25,7 @@ class LLMConfig:
     model: str = "claude-opus-4-6"
     max_tokens: int = 16000
     thinking: bool = True
+    thinking_budget: int = 4096
     compaction: bool = True
     api_key: str = ""
 
@@ -182,6 +183,7 @@ def _build_defaults() -> ShannonConfig:
     llm.model = "claude-opus-4-6"
     llm.max_tokens = 16000
     llm.thinking = True
+    llm.thinking_budget = 4096
     llm.compaction = True
     llm.api_key = ""
 

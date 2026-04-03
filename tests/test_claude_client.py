@@ -271,3 +271,9 @@ class TestNormalizeMessages:
         _, api_messages = client._build_messages(messages)
         # Non-string content can't be merged — should remain separate
         assert len(api_messages) == 2
+
+
+def test_generate_kwargs_include_thinking_budget():
+    client = make_client(thinking=True, thinking_budget=2048)
+    assert client._config.thinking_budget == 2048
+    assert client._config.thinking is True
