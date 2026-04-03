@@ -38,7 +38,13 @@ class BashExecutor:
         return self._process
 
     def _check_blocklist(self, command: str) -> str | None:
-        """Return an error string if the command matches a blocklist entry, else None."""
+        """Return an error string if the command matches a blocklist entry, else None.
+
+        NOTE: This is a simple substring check and can be bypassed by obfuscation
+        (e.g., variable expansion, path aliases). It is a convenience filter, not a
+        security boundary. The real protection is ``require_confirmation``, which
+        prompts the user before executing any command.
+        """
         for pattern in self._config.blocklist:
             if pattern in command:
                 return f"Command not allowed: matches blocklist pattern '{pattern}'"
