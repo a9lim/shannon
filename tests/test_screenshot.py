@@ -5,6 +5,40 @@ import pytest
 from shannon.computer.screenshot import ScreenCapture
 
 
+def test_resize_image_reduces_dimensions():
+    """_resize_image should scale down images exceeding max dimensions."""
+    from shannon.vision.providers.screen import _resize_image
+    from PIL import Image
+    import io
+
+    # Create a 1920x1080 test image
+    img = Image.new("RGB", (1920, 1080), color="red")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original_bytes = buf.getvalue()
+
+    resized = _resize_image(original_bytes, max_width=1024, max_height=768)
+
+    resized_img = Image.open(io.BytesIO(resized))
+    assert resized_img.width <= 1024
+    assert resized_img.height <= 768
+
+
+def test_resize_image_noop_when_small():
+    """_resize_image should return input unchanged when within bounds."""
+    from shannon.vision.providers.screen import _resize_image
+    from PIL import Image
+    import io
+
+    img = Image.new("RGB", (640, 480), color="blue")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original_bytes = buf.getvalue()
+
+    resized = _resize_image(original_bytes, max_width=1024, max_height=768)
+    assert resized == original_bytes
+
+
 def test_scale_factor_small_screen():
     """Small screens (well within API limits) should have scale factor of 1.0."""
     cap = ScreenCapture(1280, 720)

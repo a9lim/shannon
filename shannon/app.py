@@ -207,7 +207,10 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         try:
             import mss  # noqa: F401 — check availability
             from shannon.vision.providers.screen import ScreenCapture
-            vision_providers.append(ScreenCapture())
+            vision_providers.append(ScreenCapture(
+                max_width=vision_cfg.max_width,
+                max_height=vision_cfg.max_height,
+            ))
         except ImportError:
             logger.warning(
                 "mss not installed; screen capture unavailable. "

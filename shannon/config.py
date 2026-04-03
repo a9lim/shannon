@@ -56,6 +56,8 @@ class VisionConfig:
     screen: bool = True
     webcam: bool = False
     interval_seconds: float = 60.0
+    max_width: int = 1024
+    max_height: int = 768
 
 
 @dataclass
