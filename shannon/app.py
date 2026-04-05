@@ -101,8 +101,25 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         computer_executor=computer_executor,
         bash_executor=bash_executor,
         text_editor_executor=text_editor_executor,
+        tools_config=config.tools,
+        bus=bus,
     )
     registry = ToolRegistry(config)
+
+    # CLI confirmation handler — prompts via stdin when a tool needs approval
+    from shannon.events import ToolConfirmationRequest, ToolConfirmationResponse
+
+    async def _cli_confirm_handler(event: ToolConfirmationRequest) -> None:
+        loop = asyncio.get_running_loop()
+        answer = await loop.run_in_executor(
+            None, lambda: input(f"\n[{event.tool_name}] {event.description}\nAllow? [y/N]: ")
+        )
+        approved = answer.strip().lower() in ("y", "yes")
+        await bus.publish(ToolConfirmationResponse(
+            request_id=event.request_id, approved=approved,
+        ))
+
+    bus.subscribe(ToolConfirmationRequest, _cli_confirm_handler)
 
     # ------------------------------------------------------------------
     # Brain
@@ -295,6 +312,12 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         # Stop modules
         autonomy_loop.stop()
         vision_manager.stop()
+        # Release vision provider resources
+        for vp in vision_providers:
+            try:
+                await vp.close()
+            except Exception:
+                logger.debug("Error closing vision provider", exc_info=True)
         await bash_executor.close()
         output_manager.stop()
 

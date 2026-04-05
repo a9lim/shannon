@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from shannon.vision.providers.base import VisionProvider
 
 
@@ -19,9 +21,13 @@ class WebcamCapture(VisionProvider):
         return self._cap
 
     async def capture(self) -> bytes:
-        """Read a frame from the webcam and return it as PNG bytes."""
-        import cv2
+        """Read a frame from the webcam and return it as PNG bytes (non-blocking)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._capture_sync)
 
+    def _capture_sync(self) -> bytes:
+        """Synchronous capture implementation."""
+        import cv2
         cap = self._get_cap()
         ret, frame = cap.read()
         if not ret:
@@ -34,7 +40,7 @@ class WebcamCapture(VisionProvider):
     def source_name(self) -> str:
         return "cam"
 
-    def release(self) -> None:
+    async def close(self) -> None:
         """Release the underlying VideoCapture resource."""
         if self._cap is not None:
             self._cap.release()

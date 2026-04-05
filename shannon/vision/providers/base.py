@@ -13,3 +13,7 @@ class VisionProvider(ABC):
     def source_name(self) -> str:
         """Return the source identifier: 'screen' or 'cam'."""
         ...
+
+    async def close(self) -> None:
+        """Release resources. Default no-op; override in providers that hold handles."""
+        pass
