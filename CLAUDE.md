@@ -66,6 +66,8 @@ Messaging: **DiscordProvider** → **MessagingManager** (debounce, should_respon
 
 Autonomous: **VisionManager** emits `VisionFrame` → **AutonomyLoop** evaluates triggers → `AutonomousTrigger` → **Brain** (same flow)
 
+Voice: **User speaks in VC** → VoiceManager captures per-user audio → silence gap → Whisper STT → `VoiceInput` → **Brain** → `LLMResponse` (CLI) + `VoiceOutput` → **VoiceManager** plays TTS in VC
+
 ## Messaging Behavior
 
 `MessagingManager` adds platform-agnostic chat behaviors on top of the event bus:
@@ -87,6 +89,16 @@ Config fields: `messaging.debounce_delay` (0-60, default 3.0), `messaging.reply_
 The LLM can call the `continue` tool to send multiple messages in a row without waiting for user input. Each call emits the current text immediately, then the brain calls the LLM again. Capped at `memory.max_continues` (default 5). For chat platforms, the first message replies to the original; follow-ups are standalone messages in the channel.
 
 When the tool loop exhausts its maximum iterations without completing, the brain makes a final tool-free LLM call to produce a coherent closing response.
+
+## Discord Voice Channels
+
+Shannon can join Discord voice channels for full-duplex audio communication. Requires `--speech` flag and `messaging.voice.enabled: true`.
+
+**How it works:** VoiceManager auto-joins configured voice channels when users enter, captures per-user audio via raw UDP socket listener (RTP parse, decrypt, opus decode, PCM buffer), batches on silence gaps, transcribes via Whisper STT, and sends the combined input to the brain. Responses are synthesized via Piper TTS and played back through the VoiceClient.
+
+**Config fields:** `messaging.voice.enabled` (default false), `messaging.voice.auto_join_channels` (list of channel IDs, empty = any), `messaging.voice.silence_threshold` (0.5-10.0, default 2.0), `messaging.voice.buffer_max_seconds` (5.0-60.0, default 30.0), `messaging.voice.voice_reply_probability` (0-1, default 1.0), `messaging.voice.mute_during_playback` (default true), `messaging.voice.volume` (0-2, default 1.0).
+
+**Dependencies:** `PyNaCl`, `davey`, system `libopus`. Install with `pip install 'shannon[voice]'`.
 
 ## Testing
 
@@ -124,7 +136,7 @@ shannon/
 ├── output/             # OutputManager + TTSProvider (piper.py) + VTuberProvider (vtube_studio.py)
 ├── vision/             # VisionManager + VisionProvider (screen.py, webcam.py)
 ├── autonomy/           # AutonomyLoop (idle timeout, screen change triggers)
-└── messaging/          # MessagingManager + MessagingProvider (discord.py)
+└── messaging/          # MessagingManager + MessagingProvider (discord.py, discord_voice.py)
 ```
 
 ## Credentials
