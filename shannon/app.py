@@ -128,14 +128,6 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     bus.subscribe(ToolConfirmationRequest, _cli_confirm_handler)
 
     # ------------------------------------------------------------------
-    # Brain
-    # ------------------------------------------------------------------
-    from shannon.brain.brain import Brain
-
-    brain = Brain(bus=bus, claude=claude, dispatcher=dispatcher, registry=registry, config=config)
-    await brain.start()
-
-    # ------------------------------------------------------------------
     # Input
     # ------------------------------------------------------------------
     from shannon.input.manager import InputManager
@@ -184,6 +176,21 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
                     "piper-tts not installed; speech output unavailable. "
                     "Install with: pip install piper-tts"
                 )
+
+    # ------------------------------------------------------------------
+    # Brain
+    # ------------------------------------------------------------------
+    from shannon.brain.brain import Brain
+
+    brain = Brain(
+        bus=bus,
+        claude=claude,
+        dispatcher=dispatcher,
+        registry=registry,
+        config=config,
+        tts=tts_provider,  # For voice channel TTS synthesis
+    )
+    await brain.start()
 
     vtuber_cfg = config.vtuber
     if vtuber_cfg.type == "vtube_studio":
@@ -286,6 +293,40 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     messaging_manager = MessagingManager(bus=bus, providers=messaging_providers, config=msg_cfg)
     await messaging_manager.start()
 
+    # Voice support (requires --speech and messaging)
+    voice_manager = None
+    if msg_cfg.voice.enabled:
+        if not speech_mode:
+            raise ValueError(
+                "Voice requires --speech flag. "
+                "Run: shannon --speech"
+            )
+        try:
+            import nacl  # noqa: F401
+        except ImportError:
+            raise ValueError(
+                "Voice enabled but PyNaCl not installed. "
+                "Install with: pip install 'shannon[voice]'"
+            )
+        from shannon.messaging.providers.discord_voice import VoiceManager
+        discord_provider = messaging_providers[0] if messaging_providers else None
+        if discord_provider is not None and discord_provider.client is not None:
+            voice_manager = VoiceManager(
+                client=discord_provider.client,
+                stt=stt_provider,
+                tts=tts_provider,
+                bus=bus,
+                config=msg_cfg.voice,
+            )
+            await voice_manager.start()
+
+            # Register voice state update handler on the discord client
+            @discord_provider.client.event
+            async def on_voice_state_update(member, before, after):
+                await voice_manager.handle_voice_state_update(member, before, after)
+
+            logger.info("Discord voice support enabled")
+
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
@@ -315,8 +356,11 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         # Wait for cancellations to propagate
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Stop modules in dependency order: messaging first (stop accepting),
-        # then autonomy/vision, then bash, then output, then VTuber/computer.
+        # Stop modules in dependency order: voice first (disconnect),
+        # then messaging (stop accepting), then autonomy/vision, then bash,
+        # then output, then VTuber/computer.
+        if voice_manager is not None:
+            await voice_manager.stop()
         await messaging_manager.stop()
         autonomy_loop.stop()
         vision_manager.stop()
