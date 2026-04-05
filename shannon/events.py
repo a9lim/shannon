@@ -112,3 +112,29 @@ class ToolConfirmationResponse:
     """User's approval/denial of a tool execution."""
     request_id: str
     approved: bool
+
+
+@dataclass
+class VoiceInput:
+    """Batched transcription from voice channel after silence gap."""
+    text: str
+    speakers: dict[str, str]  # user_id -> display_name
+    channel: str
+    platform: str = "discord"
+
+
+@dataclass
+class VoiceOutput:
+    """TTS audio to play in a voice channel."""
+    audio: object  # AudioChunk — typed as object to avoid circular import
+    channel: str
+    platform: str = "discord"
+
+
+@dataclass
+class VoiceStateChange:
+    """User joined/left a voice channel."""
+    user_id: str
+    user_name: str
+    channel: str | None  # None = left all voice
+    platform: str = "discord"

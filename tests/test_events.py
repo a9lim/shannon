@@ -180,3 +180,38 @@ class TestChatReaction:
         assert r.platform == "discord"
         assert r.channel == "c"
         assert r.message_id == "m1"
+
+
+from shannon.events import VoiceInput, VoiceOutput, VoiceStateChange
+
+
+def test_voice_input():
+    event = VoiceInput(
+        text="Hello everyone",
+        speakers={"123": "Alice", "456": "Bob"},
+        channel="789",
+    )
+    assert event.text == "Hello everyone"
+    assert event.speakers == {"123": "Alice", "456": "Bob"}
+    assert event.channel == "789"
+    assert event.platform == "discord"
+
+
+def test_voice_output():
+    from shannon.output.providers.tts.base import AudioChunk
+    chunk = AudioChunk(data=b"\x00" * 100, sample_rate=22050, channels=1)
+    event = VoiceOutput(audio=chunk, channel="789")
+    assert event.audio is chunk
+    assert event.channel == "789"
+    assert event.platform == "discord"
+
+
+def test_voice_state_change_join():
+    event = VoiceStateChange(user_id="123", user_name="Alice", channel="789")
+    assert event.channel == "789"
+    assert event.platform == "discord"
+
+
+def test_voice_state_change_leave():
+    event = VoiceStateChange(user_id="123", user_name="Alice", channel=None)
+    assert event.channel is None
