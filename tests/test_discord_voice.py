@@ -421,3 +421,98 @@ def test_voice_manager_muted_skips_buffering():
             vm._on_udp_packet(header + b"\x00")
 
     assert len(vm._user_buffers) == 0
+
+
+# ---------------------------------------------------------------------------
+# Silence monitor / STT transcription tests (Task 11)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_silence_monitor_triggers_transcription():
+    """When all speakers are silent past threshold, transcribe and publish VoiceInput."""
+    from shannon.messaging.providers.discord_voice import VoiceManager, UserAudioBuffer
+    from shannon.events import VoiceInput
+
+    vm, bus, client = _make_voice_manager(enabled=True, silence_threshold=0.5)
+    vm._stt.transcribe = AsyncMock(return_value="hello world")
+
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+    buf.append(b"\x00" * 3840)
+    buf._last_activity = time.monotonic() - 1.0  # 1s ago, past 0.5s threshold
+    vm._user_buffers[99] = buf
+    vm._ssrc_to_user[99] = ("user_1", "Alice")
+
+    fake_vc = FakeVoiceClient()
+    fake_vc.channel = FakeVoiceChannel("vc_1")
+    vm._voice_clients["guild_1"] = fake_vc
+
+    received: list[VoiceInput] = []
+    bus.subscribe(VoiceInput, lambda e: received.append(e))
+
+    await vm._check_silence_and_transcribe()
+
+    assert len(received) == 1
+    assert received[0].text == "Alice: hello world"
+    assert received[0].speakers == {"user_1": "Alice"}
+    assert received[0].channel == "vc_1"
+
+
+@pytest.mark.asyncio
+async def test_silence_monitor_skips_when_still_speaking():
+    """Don't transcribe if speakers haven't been silent long enough."""
+    from shannon.messaging.providers.discord_voice import VoiceManager, UserAudioBuffer
+    from shannon.events import VoiceInput
+
+    vm, bus, client = _make_voice_manager(enabled=True, silence_threshold=2.0)
+
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+    buf.append(b"\x00" * 3840)
+    # Still active (just appended)
+    vm._user_buffers[99] = buf
+    vm._ssrc_to_user[99] = ("user_1", "Alice")
+
+    received: list[VoiceInput] = []
+    bus.subscribe(VoiceInput, lambda e: received.append(e))
+
+    await vm._check_silence_and_transcribe()
+
+    assert len(received) == 0
+    assert buf.has_data  # Buffer not drained
+
+
+@pytest.mark.asyncio
+async def test_silence_monitor_multiple_speakers():
+    """Multiple speakers should each be transcribed independently."""
+    from shannon.messaging.providers.discord_voice import VoiceManager, UserAudioBuffer
+    from shannon.events import VoiceInput
+
+    vm, bus, client = _make_voice_manager(enabled=True, silence_threshold=0.5)
+
+    call_count = 0
+    async def mock_transcribe(audio):
+        nonlocal call_count
+        call_count += 1
+        return f"text_{call_count}"
+
+    vm._stt.transcribe = mock_transcribe
+
+    for ssrc, uid, name in [(10, "u1", "Alice"), (20, "u2", "Bob")]:
+        buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+        buf.append(b"\x00" * 3840)
+        buf._last_activity = time.monotonic() - 1.0
+        vm._user_buffers[ssrc] = buf
+        vm._ssrc_to_user[ssrc] = (uid, name)
+
+    fake_vc = FakeVoiceClient()
+    fake_vc.channel = FakeVoiceChannel("vc_1")
+    vm._voice_clients["guild_1"] = fake_vc
+
+    received: list[VoiceInput] = []
+    bus.subscribe(VoiceInput, lambda e: received.append(e))
+
+    await vm._check_silence_and_transcribe()
+
+    assert len(received) == 1
+    assert len(received[0].speakers) == 2
+    assert "Alice:" in received[0].text
+    assert "Bob:" in received[0].text

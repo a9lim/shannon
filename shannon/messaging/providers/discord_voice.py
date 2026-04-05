@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import audioop
+import io
 import logging
 import struct
 import time
+import wave
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -77,6 +79,17 @@ def pcm_mono_to_48k_stereo(data: bytes, src_rate: int) -> bytes:
     # Mono to stereo (same amplitude in both channels)
     stereo = audioop.tostereo(data, 2, 1.0, 1.0)
     return stereo
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int, channels: int) -> bytes:
+    """Wrap raw 16-bit PCM in a WAV container."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +364,67 @@ class VoiceManager:
         try:
             while True:
                 await asyncio.sleep(0.2)
+                await self._check_silence_and_transcribe()
         except asyncio.CancelledError:
             pass
+
+    async def _check_silence_and_transcribe(self) -> None:
+        """Transcribe all active buffers when every speaker has been silent past threshold."""
+        from shannon.events import VoiceInput
+
+        if not self._user_buffers:
+            return
+
+        active_buffers: list[tuple[int, UserAudioBuffer]] = [
+            (ssrc, buf) for ssrc, buf in self._user_buffers.items() if buf.has_data
+        ]
+        if not active_buffers:
+            return
+
+        for _ssrc, buf in active_buffers:
+            if buf.silence_seconds < self._config.silence_threshold:
+                return  # Someone is still speaking
+
+        # All speakers are silent — transcribe each buffer
+        speakers: dict[str, str] = {}
+        text_parts: list[str] = []
+
+        for ssrc, buf in active_buffers:
+            user_info = self._ssrc_to_user.get(ssrc)
+            if user_info is None:
+                buf.drain()
+                continue
+
+            user_id, display_name = user_info
+            pcm_48k_stereo = buf.drain()
+            pcm_16k_mono = pcm_48k_stereo_to_16k_mono(pcm_48k_stereo)
+            wav_data = _pcm_to_wav(pcm_16k_mono, sample_rate=16000, channels=1)
+
+            try:
+                transcript = await self._stt.transcribe(wav_data)
+            except Exception:
+                logger.exception("STT transcription failed for user %s", display_name)
+                continue
+
+            transcript = transcript.strip()
+            if transcript:
+                speakers[user_id] = display_name
+                text_parts.append(f"{display_name}: {transcript}")
+
+        if not text_parts:
+            return
+
+        channel_id = ""
+        for vc in self._voice_clients.values():
+            if hasattr(vc, "channel") and vc.channel:
+                channel_id = str(vc.channel.id)
+                break
+
+        await self._bus.publish(VoiceInput(
+            text="\n".join(text_parts),
+            speakers=speakers,
+            channel=channel_id,
+        ))
 
     async def _on_voice_output(self, event: Any) -> None:
         """Handle VoiceOutput event."""
