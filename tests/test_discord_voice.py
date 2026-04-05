@@ -582,3 +582,56 @@ async def test_silence_monitor_multiple_speakers():
     assert len(received[0].speakers) == 2
     assert "Alice:" in received[0].text
     assert "Bob:" in received[0].text
+
+
+# ---------------------------------------------------------------------------
+# Integration test — full voice flow (Task 16)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_full_voice_flow_integration():
+    """End-to-end: audio buffer -> silence -> STT -> VoiceInput."""
+    from shannon.messaging.providers.discord_voice import VoiceManager, UserAudioBuffer
+    from shannon.events import VoiceInput
+
+    vm, bus, client = _make_voice_manager(enabled=True, silence_threshold=0.3)
+    vm._stt.transcribe = AsyncMock(return_value="Hey Shannon")
+
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+    buf.append(b"\x00" * 3840)
+    buf._last_activity = time.monotonic() - 1.0
+    vm._user_buffers[42] = buf
+    vm._ssrc_to_user[42] = ("user_1", "TestUser")
+
+    fake_vc = FakeVoiceClient()
+    fake_vc.channel = FakeVoiceChannel("vc_1")
+    vm._voice_clients["guild_1"] = fake_vc
+
+    voice_inputs: list[VoiceInput] = []
+    bus.subscribe(VoiceInput, lambda e: voice_inputs.append(e))
+
+    await vm._check_silence_and_transcribe()
+
+    assert len(voice_inputs) == 1
+    assert "TestUser: Hey Shannon" in voice_inputs[0].text
+    assert voice_inputs[0].speakers == {"user_1": "TestUser"}
+    assert voice_inputs[0].channel == "vc_1"
+
+
+# ---------------------------------------------------------------------------
+# SSRC-to-user mapping (Task 17)
+# ---------------------------------------------------------------------------
+
+def test_voice_manager_registers_ssrc_from_speaking():
+    vm, bus, client = _make_voice_manager(enabled=True)
+    vm.handle_speaking_update(user_id="user_1", ssrc=42, display_name="Alice")
+    assert 42 in vm._ssrc_to_user
+    assert vm._ssrc_to_user[42] == ("user_1", "Alice")
+
+
+def test_voice_manager_updates_ssrc_mapping():
+    vm, bus, client = _make_voice_manager(enabled=True)
+    vm.handle_speaking_update(user_id="user_1", ssrc=10, display_name="Alice")
+    vm.handle_speaking_update(user_id="user_1", ssrc=20, display_name="Alice")
+    assert 10 not in vm._ssrc_to_user
+    assert 20 in vm._ssrc_to_user
