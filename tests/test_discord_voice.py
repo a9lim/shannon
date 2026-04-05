@@ -362,3 +362,62 @@ def test_chunk_audio_source_applies_volume():
     left, right = struct.unpack_from("<hh", frame, 0)
     assert abs(left - 5000) < 100  # ~50% of 10000
     assert abs(right - 5000) < 100
+
+
+# ---------------------------------------------------------------------------
+# Audio capture pipeline tests (Task 10)
+# ---------------------------------------------------------------------------
+
+def test_voice_manager_socket_callback_buffers_audio():
+    """Raw UDP packets should be parsed and buffered per SSRC."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    # Register a known SSRC -> user mapping
+    vm._ssrc_to_user[99] = ("user_1", "Alice")
+
+    # Build a fake RTP packet with SSRC=99
+    header = struct.pack(">BBHII", 0x80, 120, 1, 100, 99)
+    fake_pcm = b"\x00" * 3840  # 20ms of 48kHz stereo
+
+    # Mock decrypt and opus decode to return known PCM
+    with patch.object(vm, "_decrypt_payload", return_value=b"\x00\x00"):
+        with patch.object(vm, "_decode_opus", return_value=fake_pcm):
+            vm._on_udp_packet(header + b"\x00\x00")
+
+    buf = vm._user_buffers.get(99)
+    assert buf is not None
+    assert buf.has_data
+
+
+def test_voice_manager_ignores_unknown_ssrc():
+    """Packets from unknown SSRCs should be silently dropped."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+
+    vm, bus, client = _make_voice_manager(enabled=True)
+    # No SSRC mapping registered
+
+    header = struct.pack(">BBHII", 0x80, 120, 1, 100, 999)
+
+    with patch.object(vm, "_decrypt_payload", return_value=b"\x00"):
+        vm._on_udp_packet(header + b"\x00")
+
+    assert len(vm._user_buffers) == 0
+
+
+def test_voice_manager_muted_skips_buffering():
+    """When muted (during playback), packets should be dropped."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+
+    vm, bus, client = _make_voice_manager(enabled=True, mute_during_playback=True)
+    vm._muted = True
+    vm._ssrc_to_user[99] = ("user_1", "Alice")
+
+    header = struct.pack(">BBHII", 0x80, 120, 1, 100, 99)
+
+    with patch.object(vm, "_decrypt_payload", return_value=b"\x00"):
+        with patch.object(vm, "_decode_opus", return_value=b"\x00" * 3840):
+            vm._on_udp_packet(header + b"\x00")
+
+    assert len(vm._user_buffers) == 0

@@ -275,11 +275,76 @@ class VoiceManager:
 
     def _register_audio_listener(self, vc: Any) -> None:
         """Register a socket listener on the VoiceClient to receive raw UDP packets."""
-        pass  # Implemented in Task 10
+        try:
+            vc._connection.add_socket_listener(self._on_udp_packet)
+        except Exception:
+            logger.exception("Failed to register socket listener")
 
     def _unregister_audio_listener(self, vc: Any) -> None:
         """Remove the socket listener."""
-        pass  # Implemented in Task 10
+        try:
+            vc._connection.remove_socket_listener(self._on_udp_packet)
+        except Exception:
+            logger.debug("Failed to remove socket listener", exc_info=True)
+
+    def _on_udp_packet(self, data: bytes) -> None:
+        """Callback for raw UDP packets from Discord voice socket."""
+        if self._muted and self._config.mute_during_playback:
+            return
+
+        parsed = parse_rtp_header(data)
+        if parsed is None:
+            return
+
+        seq, ts, ssrc, payload = parsed
+
+        if ssrc not in self._ssrc_to_user:
+            return
+
+        decrypted = self._decrypt_payload(payload, data[:12])
+        if decrypted is None:
+            return
+
+        pcm = self._decode_opus(decrypted)
+        if pcm is None:
+            return
+
+        if ssrc not in self._user_buffers:
+            self._user_buffers[ssrc] = UserAudioBuffer(
+                max_seconds=self._config.buffer_max_seconds,
+                sample_rate=48000,
+                channels=2,
+            )
+        self._user_buffers[ssrc].append(pcm)
+
+    def _decrypt_payload(self, payload: bytes, header: bytes) -> bytes | None:
+        """Decrypt an RTP payload using the session secret key."""
+        for vc in self._voice_clients.values():
+            try:
+                secret_key = bytes(vc._connection.secret_key)
+                if not secret_key:
+                    continue
+                nonce = header + b"\x00" * (24 - len(header))
+                import nacl.secret
+                box = nacl.secret.SecretBox(secret_key)
+                return box.decrypt(payload, nonce)
+            except Exception:
+                logger.debug("Decryption failed for packet", exc_info=True)
+                return None
+        return None
+
+    def _decode_opus(self, opus_data: bytes) -> bytes | None:
+        """Decode an opus frame to 48kHz stereo PCM."""
+        try:
+            if self._opus_decoder is None:
+                import discord.opus
+                if not discord.opus.is_loaded():
+                    discord.opus._load_default()
+                self._opus_decoder = discord.opus.Decoder()
+            return self._opus_decoder.decode(opus_data)
+        except Exception:
+            logger.debug("Opus decode failed", exc_info=True)
+            return None
 
     async def _silence_monitor(self) -> None:
         """Background task: poll buffers for silence gaps."""
