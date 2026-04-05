@@ -227,9 +227,139 @@ def test_view_range_start_greater_than_end_returns_error(executor, tmp_path):
     assert "error" in result.lower() or "invalid" in result.lower()
 
 
+def test_view_range_end_negative_one_reads_to_end(executor, tmp_path):
+    """view_range with -1 as end should read to end of file."""
+    f = tmp_path / "neg.txt"
+    f.write_text("a\nb\nc\nd\ne\n")
+    result = executor.execute({"command": "view", "path": str(f), "view_range": [3, -1]})
+    assert "     3\tc" in result
+    assert "     4\td" in result
+    assert "     5\te" in result
+    assert "     1\t" not in result
+    assert "     2\t" not in result
+
+
 def test_view_range_start_zero_returns_error(executor, tmp_path):
     """view_range where start < 1 should return an error."""
     f = tmp_path / "zerostart.txt"
     f.write_text("a\nb\nc\n")
     result = executor.execute({"command": "view", "path": str(f), "view_range": [0, 5]})
     assert "error" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# _view: permission and encoding robustness
+# ---------------------------------------------------------------------------
+
+
+def test_view_directory_permission_error(executor, tmp_path):
+    """Directory listing should handle PermissionError gracefully."""
+    d = tmp_path / "noaccess"
+    d.mkdir()
+    d.chmod(0o000)
+    result = executor.execute({"command": "view", "path": str(d)})
+    d.chmod(0o755)  # restore for cleanup
+    assert "permission" in result.lower() or "error" in result.lower()
+
+
+def test_view_file_malformed_utf8(executor, tmp_path):
+    """Malformed UTF-8 should be handled with replacement characters."""
+    f = tmp_path / "bad.bin"
+    f.write_bytes(b"good \xff bad \xfe end")
+    result = executor.execute({"command": "view", "path": str(f)})
+    assert "good" in result
+    assert "end" in result
+
+
+# ---------------------------------------------------------------------------
+# _str_replace: permission and directory handling
+# ---------------------------------------------------------------------------
+
+
+def test_str_replace_on_directory_returns_error(executor, tmp_path):
+    """str_replace on a directory should return an error."""
+    d = tmp_path / "subdir"
+    d.mkdir()
+    result = executor.execute({
+        "command": "str_replace",
+        "path": str(d),
+        "old_str": "x",
+        "new_str": "y",
+    })
+    assert "does not exist" in result.lower() or "error" in result.lower()
+
+
+def test_str_replace_permission_error(executor, tmp_path):
+    """str_replace should handle PermissionError gracefully."""
+    f = tmp_path / "readonly.txt"
+    f.write_text("content")
+    f.chmod(0o000)
+    result = executor.execute({
+        "command": "str_replace",
+        "path": str(f),
+        "old_str": "content",
+        "new_str": "new",
+    })
+    f.chmod(0o644)  # restore for cleanup
+    assert "permission" in result.lower() or "error" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# _insert: bounds validation and directory handling
+# ---------------------------------------------------------------------------
+
+
+def test_insert_negative_line_returns_error(executor, tmp_path):
+    """Negative insert_line should be rejected."""
+    f = tmp_path / "bounds.txt"
+    f.write_text("line one\n")
+    result = executor.execute({
+        "command": "insert",
+        "path": str(f),
+        "insert_line": -1,
+        "insert_text": "bad",
+    })
+    assert "Invalid" in result
+
+
+def test_insert_beyond_file_length_returns_error(executor, tmp_path):
+    """insert_line beyond file length should be rejected."""
+    f = tmp_path / "bounds.txt"
+    f.write_text("line one\nline two\n")
+    result = executor.execute({
+        "command": "insert",
+        "path": str(f),
+        "insert_line": 999,
+        "insert_text": "bad",
+    })
+    assert "Invalid" in result
+    assert "insert_line" in result
+
+
+def test_insert_on_directory_returns_error(executor, tmp_path):
+    """insert on a directory should return an error."""
+    d = tmp_path / "subdir"
+    d.mkdir()
+    result = executor.execute({
+        "command": "insert",
+        "path": str(d),
+        "insert_line": 0,
+        "insert_text": "bad",
+    })
+    assert "does not exist" in result.lower() or "error" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# General error handling
+# ---------------------------------------------------------------------------
+
+
+def test_unexpected_exception_returns_error_string(executor, tmp_path, monkeypatch):
+    """Unexpected exceptions should be caught and returned as error strings."""
+    import shannon.tools.text_editor_executor as te
+    def bad_view(self, path, view_range):
+        raise RuntimeError("disk on fire")
+    monkeypatch.setattr(te.TextEditorExecutor, "_view", bad_view)
+    result = executor.execute({"command": "view", "path": "/tmp/test"})
+    assert "Error" in result
+    assert "disk on fire" in result

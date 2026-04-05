@@ -60,6 +60,7 @@ class MessagingManager:
                     custom_emojis: str = "",
                     participants: dict[str, str] | None = None,
                     is_in_conversation: bool = False,
+                    is_dm: bool = False,
                 ) -> None:
                     await self._handle_incoming(
                         platform=p.platform_name(),
@@ -73,6 +74,7 @@ class MessagingManager:
                         custom_emojis=custom_emojis,
                         participants=participants or {},
                         is_in_conversation=is_in_conversation,
+                        is_dm=is_dm,
                     )
                 return _on_message
 
@@ -101,8 +103,12 @@ class MessagingManager:
         is_reply_to_bot: bool,
         is_mention: bool,
         is_in_conversation: bool = False,
+        is_dm: bool = False,
     ) -> bool:
         """Decide whether the bot should respond to this message."""
+        if is_dm:
+            return True
+
         if is_mention or is_reply_to_bot:
             return True
 
@@ -128,9 +134,10 @@ class MessagingManager:
         custom_emojis: str = "",
         participants: dict[str, str] | None = None,
         is_in_conversation: bool = False,
+        is_dm: bool = False,
     ) -> None:
         """Evaluate response eligibility and debounce before publishing."""
-        if not self._should_respond(platform, channel_id, is_reply_to_bot, is_mention, is_in_conversation):
+        if not self._should_respond(platform, channel_id, is_reply_to_bot, is_mention, is_in_conversation, is_dm):
             return
 
         key = f"{platform}:{channel_id}"
@@ -151,6 +158,7 @@ class MessagingManager:
             is_mention=is_mention,
             custom_emojis=custom_emojis,
             participants=participants or {},
+            is_dm=is_dm,
         )
 
         async def _typing_loop(provider: "MessagingProvider", ch_id: str) -> None:

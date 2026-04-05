@@ -77,6 +77,7 @@ class ChatMessage:
     is_mention: bool = False
     custom_emojis: str = ""
     participants: dict[str, str] = field(default_factory=dict)
+    is_dm: bool = False
 
 
 @dataclass
@@ -96,3 +97,18 @@ class ChatReaction:
     platform: str
     channel: str
     message_id: str
+
+
+@dataclass
+class ToolConfirmationRequest:
+    """Request user approval before executing a tool."""
+    tool_name: str
+    description: str
+    request_id: str
+
+
+@dataclass
+class ToolConfirmationResponse:
+    """User's approval/denial of a tool execution."""
+    request_id: str
+    approved: bool

@@ -151,6 +151,8 @@ class DiscordProvider(MessagingProvider):
                         message.channel, self._conversation_expiry
                     )
 
+                is_dm = message.guild is None
+
                 await self._callback(
                     message.content,
                     str(message.author),
@@ -162,6 +164,7 @@ class DiscordProvider(MessagingProvider):
                     custom_emojis,
                     participants,
                     is_in_conversation,
+                    is_dm,
                 )
 
         # Start the client in the background without blocking.

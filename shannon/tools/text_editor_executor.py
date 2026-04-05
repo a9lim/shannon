@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from shannon.config import TextEditorConfig
+
+logger = logging.getLogger(__name__)
 
 
 class TextEditorExecutor:
@@ -29,44 +32,63 @@ class TextEditorExecutor:
         command = params.get("command")
         path = params.get("path", "")
 
-        if command == "view":
-            return self._view(path, params.get("view_range"))
-        elif command == "create":
-            return self._create(path, params.get("file_text", ""))
-        elif command == "str_replace":
-            return self._str_replace(path, params.get("old_str", ""), params.get("new_str", ""))
-        elif command == "insert":
-            return self._insert(path, params.get("insert_line", 0), params.get("insert_text", ""))
-        else:
-            return f"Unknown command: {command}"
+        try:
+            if command == "view":
+                return self._view(path, params.get("view_range"))
+            elif command == "create":
+                return self._create(path, params.get("file_text", ""))
+            elif command == "str_replace":
+                return self._str_replace(path, params.get("old_str", ""), params.get("new_str", ""))
+            elif command == "insert":
+                return self._insert(path, params.get("insert_line", 0), params.get("insert_text", ""))
+            else:
+                return f"Unknown command: {command}"
+        except Exception as e:
+            logger.exception("Text editor command '%s' failed on %s", command, path)
+            return f"Error: {e}"
 
     # ------------------------------------------------------------------
     # _view
     # ------------------------------------------------------------------
 
     def _view(self, path: str, view_range: list[int] | None) -> str:
-        p = Path(path)
+        p = Path(path).resolve()
         if not p.exists():
             return f"The path {path} does not exist. Please provide a valid path."
 
         if p.is_dir():
-            entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+            try:
+                entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name))
+            except PermissionError:
+                return f"Error: Permission denied reading directory {path}"
             lines = []
             for entry in entries:
                 if entry.is_file():
-                    size = entry.stat().st_size
+                    try:
+                        size = entry.stat().st_size
+                    except OSError:
+                        size = 0
                     lines.append(f"{entry.name}  ({size} bytes)")
                 else:
                     lines.append(f"{entry.name}/")
             return f"Directory listing of {path}:\n" + "\n".join(lines)
 
-        content = p.read_text(errors="replace")
+        try:
+            content = p.read_text(errors="replace")
+        except PermissionError:
+            return f"Error: Permission denied reading {path}"
+        except OSError as exc:
+            return f"Error reading {path}: {exc}"
+
         all_lines = content.splitlines(keepends=True)
 
         if view_range is not None:
             if len(view_range) < 2:
                 return "Error: view_range must have exactly 2 elements [start, end]."
             start, end = view_range[0], view_range[1]
+            # -1 means read to end of file
+            if end == -1:
+                end = len(all_lines)
             if start < 1 or start > end:
                 return f"Error: invalid view_range [{start}, {end}]. Start must be >= 1 and <= end."
             # 1-indexed, inclusive
@@ -86,7 +108,7 @@ class TextEditorExecutor:
     # ------------------------------------------------------------------
 
     def _create(self, path: str, file_text: str) -> str:
-        p = Path(path)
+        p = Path(path).resolve()
         if p.exists():
             return f"Error: File {path} already exists"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -98,11 +120,16 @@ class TextEditorExecutor:
     # ------------------------------------------------------------------
 
     def _str_replace(self, path: str, old_str: str, new_str: str) -> str:
-        p = Path(path)
-        if not p.exists():
+        p = Path(path).resolve()
+        if not p.exists() or p.is_dir():
             return f"The path {path} does not exist. Please provide a valid path."
 
-        content = p.read_text(errors="replace")
+        try:
+            content = p.read_text(errors="replace")
+        except PermissionError:
+            return f"Error: Permission denied reading {path}"
+        except OSError as exc:
+            return f"Error reading {path}: {exc}"
 
         # Count occurrences and track which lines they start on
         occurrences: list[int] = []
@@ -137,12 +164,26 @@ class TextEditorExecutor:
     # ------------------------------------------------------------------
 
     def _insert(self, path: str, insert_line: int, insert_text: str) -> str:
-        p = Path(path)
-        if not p.exists():
+        p = Path(path).resolve()
+        if not p.exists() or p.is_dir():
             return f"The path {path} does not exist. Please provide a valid path."
 
-        content = p.read_text(errors="replace")
+        try:
+            content = p.read_text(errors="replace")
+        except PermissionError:
+            return f"Error: Permission denied reading {path}"
+        except OSError as exc:
+            return f"Error reading {path}: {exc}"
+
         lines = content.splitlines(keepends=True)
+        n_lines = len(lines)
+
+        # Validate insertion bounds (0-indexed: 0 = before first line, n_lines = after last)
+        if insert_line < 0 or insert_line > n_lines:
+            return (
+                f"Error: Invalid `insert_line` parameter: {insert_line}. "
+                f"It should be within the range of lines of the file: [0, {n_lines}]"
+            )
 
         # insert_line is 1-indexed; insert after that line.
         # insert_line=0 means insert before everything.

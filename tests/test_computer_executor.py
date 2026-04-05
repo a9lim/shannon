@@ -120,8 +120,8 @@ async def test_scroll_calls_pyautogui_scroll(executor):
         result = await executor.execute({
             "action": "scroll",
             "coordinate": [500, 300],
-            "direction": "up",
-            "amount": 3,
+            "scroll_direction": "up",
+            "scroll_amount": 3,
         })
     mock_pg.moveTo.assert_called_once_with(500, 300)
     mock_pg.scroll.assert_called_once_with(3)
@@ -134,10 +134,23 @@ async def test_scroll_down_passes_negative_amount(executor):
         await executor.execute({
             "action": "scroll",
             "coordinate": [500, 300],
-            "direction": "down",
-            "amount": 2,
+            "scroll_direction": "down",
+            "scroll_amount": 2,
         })
     mock_pg.scroll.assert_called_once_with(-2)
+
+
+async def test_scroll_accepts_legacy_param_names(executor):
+    """scroll should still accept 'direction' and 'amount' for backwards compat."""
+    with patch("shannon.computer.executor.pyautogui") as mock_pg:
+        result = await executor.execute({
+            "action": "scroll",
+            "coordinate": [500, 300],
+            "direction": "up",
+            "amount": 2,
+        })
+    mock_pg.scroll.assert_called_once_with(2)
+    assert result == "OK"
 
 
 # ---------------------------------------------------------------------------
@@ -199,3 +212,124 @@ def test_shutdown_calls_executor_shutdown(executor):
     with patch.object(executor._executor, "shutdown") as mock_shutdown:
         executor.shutdown()
     mock_shutdown.assert_called_once_with(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# key action: empty text validation
+# ---------------------------------------------------------------------------
+
+
+async def test_key_empty_text_returns_error(executor):
+    """key action with empty text should return an error instead of crashing."""
+    result = await executor.execute({"action": "key", "text": ""})
+    assert "error" in result.lower()
+
+
+async def test_key_missing_text_returns_error(executor):
+    """key action with no text param should return an error."""
+    result = await executor.execute({"action": "key"})
+    assert "error" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# left_click_drag: standardized parameter name
+# ---------------------------------------------------------------------------
+
+
+async def test_left_click_drag_uses_end_coordinate(executor):
+    """left_click_drag should accept end_coordinate (snake_case)."""
+    with patch("shannon.computer.executor.pyautogui") as mock_pg:
+        result = await executor.execute({
+            "action": "left_click_drag",
+            "coordinate": [100, 200],
+            "end_coordinate": [300, 400],
+        })
+    mock_pg.mouseDown.assert_called_once()
+    mock_pg.moveTo.assert_called_once_with(300, 400)
+    mock_pg.mouseUp.assert_called_once()
+    assert result == "OK"
+
+
+# ---------------------------------------------------------------------------
+# modifier keys with click actions
+# ---------------------------------------------------------------------------
+
+
+async def test_shift_click_holds_modifier(executor):
+    """left_click with text='shift' should hold shift during click."""
+    with patch("shannon.computer.executor.pyautogui") as mock_pg:
+        result = await executor.execute({
+            "action": "left_click",
+            "coordinate": [100, 200],
+            "text": "shift",
+        })
+    mock_pg.keyDown.assert_called_once_with("shift")
+    mock_pg.click.assert_called_once_with(100, 200)
+    mock_pg.keyUp.assert_called_once_with("shift")
+    assert result == "OK"
+
+
+async def test_click_without_modifier_skips_key_down_up(executor):
+    """left_click without text param should not call keyDown/keyUp."""
+    with patch("shannon.computer.executor.pyautogui") as mock_pg:
+        result = await executor.execute({
+            "action": "left_click",
+            "coordinate": [100, 200],
+        })
+    mock_pg.keyDown.assert_not_called()
+    mock_pg.keyUp.assert_not_called()
+    mock_pg.click.assert_called_once()
+    assert result == "OK"
+
+
+# ---------------------------------------------------------------------------
+# zoom action
+# ---------------------------------------------------------------------------
+
+
+async def test_zoom_returns_image_dict(executor):
+    """zoom action should capture a screen region and return an image dict."""
+    fake_img = MagicMock()
+    fake_img.size = (200, 100)
+    fake_img.bgra = b"\x00" * (200 * 100 * 4)
+
+    import io
+    import base64
+    fake_buf = io.BytesIO()
+    # Create a minimal PNG-like bytes
+    fake_png = b"fake_png_data"
+
+    with patch("mss.mss") as mock_mss, \
+         patch("PIL.Image.frombytes", return_value=MagicMock()) as mock_frombytes:
+        mock_sct = MagicMock()
+        mock_sct.__enter__ = MagicMock(return_value=mock_sct)
+        mock_sct.__exit__ = MagicMock(return_value=False)
+        mock_grab = MagicMock()
+        mock_grab.size = (200, 100)
+        mock_grab.bgra = b"\x00" * (200 * 100 * 4)
+        mock_sct.grab.return_value = mock_grab
+        mock_mss.return_value = mock_sct
+
+        result = await executor.execute({
+            "action": "zoom",
+            "region": [100, 200, 300, 300],
+        })
+
+    assert isinstance(result, dict)
+    assert result["type"] == "image"
+    assert result["source"]["type"] == "base64"
+    assert result["source"]["media_type"] == "image/png"
+
+
+async def test_zoom_missing_region_returns_error(executor):
+    """zoom without region param should return an error."""
+    result = await executor.execute({"action": "zoom"})
+    assert isinstance(result, str)
+    assert "error" in result.lower()
+
+
+async def test_zoom_invalid_region_returns_error(executor):
+    """zoom with wrong number of coordinates should return an error."""
+    result = await executor.execute({"action": "zoom", "region": [100, 200]})
+    assert isinstance(result, str)
+    assert "error" in result.lower()

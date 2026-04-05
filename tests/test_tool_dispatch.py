@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, AsyncMock
 
 from shannon.brain.types import LLMToolCall
 from shannon.brain.tool_dispatch import ToolDispatcher
+from shannon.bus import EventBus
+from shannon.config import ToolsConfig
 
 
 # ---------------------------------------------------------------------------
@@ -20,11 +22,13 @@ def _make_dispatcher(
     computer=None,
     bash=None,
     text_editor=None,
+    memory=None,
 ) -> ToolDispatcher:
     return ToolDispatcher(
         computer_executor=computer,
         bash_executor=bash,
         text_editor_executor=text_editor,
+        memory_backend=memory,
     )
 
 
@@ -57,15 +61,25 @@ async def test_dispatch_text_editor_routes_to_text_editor_executor():
     assert result == "edit result"
 
 
-async def test_memory_is_server_side():
-    """memory tool is server-side — is_server_side returns True and dispatch is never called locally."""
-    assert ToolDispatcher.is_server_side("memory") is True
+async def test_memory_routes_to_memory_backend():
+    """memory tool is client-side — routed to memory_backend.execute."""
+    memory = MagicMock()
+    memory.execute = MagicMock(return_value="memory result")
+    dispatcher = _make_dispatcher(memory=memory)
 
-    # Dispatching memory locally should never happen, but if it did the tool
-    # falls through to the unknown-tool handler rather than a dedicated branch.
-    dispatcher = _make_dispatcher()
     result = await dispatcher.dispatch(_make_call("memory", {"command": "view", "path": "/memories"}))
-    assert "Unknown tool" in result
+
+    memory.execute.assert_called_once_with({"command": "view", "path": "/memories"})
+    assert result == "memory result"
+
+
+async def test_memory_with_none_backend_returns_error():
+    """If memory_backend is None, dispatch returns an error string."""
+    dispatcher = _make_dispatcher(memory=None)
+
+    result = await dispatcher.dispatch(_make_call("memory", {"command": "view", "path": "/memories"}))
+
+    assert "error" in result.lower()
 
 
 async def test_dispatch_computer_routes_to_computer_executor():
@@ -172,10 +186,71 @@ def test_is_server_side_true():
     assert ToolDispatcher.is_server_side("web_search") is True
     assert ToolDispatcher.is_server_side("web_fetch") is True
     assert ToolDispatcher.is_server_side("code_execution") is True
-    assert ToolDispatcher.is_server_side("memory") is True
 
 
 def test_is_server_side_false():
     assert ToolDispatcher.is_server_side("bash") is False
     assert ToolDispatcher.is_server_side("computer") is False
     assert ToolDispatcher.is_server_side("set_expression") is False
+    assert ToolDispatcher.is_server_side("memory") is False
+
+
+# ---------------------------------------------------------------------------
+# Confirmation gate tests
+# ---------------------------------------------------------------------------
+
+
+async def test_dispatch_bash_denied_when_confirmation_required(monkeypatch):
+    """When require_confirmation=True and no handler approves, dispatch returns denial."""
+    import shannon.brain.tool_dispatch as td
+    monkeypatch.setattr(td, "_CONFIRMATION_TIMEOUT", 0.1)
+
+    bus = EventBus()
+    config = ToolsConfig()
+    dispatcher = ToolDispatcher(
+        bash_executor=AsyncMock(execute=AsyncMock(return_value="output")),
+        tools_config=config,
+        bus=bus,
+    )
+    result = await dispatcher.dispatch(_make_call("bash", {"command": "ls"}))
+    assert "denied" in result.lower()
+
+
+async def test_dispatch_bash_allowed_when_confirmation_false():
+    """When require_confirmation=False, dispatch executes without confirmation."""
+    bus = EventBus()
+    config = ToolsConfig()
+    config.bash.require_confirmation = False
+    bash = AsyncMock(execute=AsyncMock(return_value="output"))
+    dispatcher = ToolDispatcher(
+        bash_executor=bash,
+        tools_config=config,
+        bus=bus,
+    )
+    result = await dispatcher.dispatch(_make_call("bash", {"command": "ls"}))
+    assert result == "output"
+    bash.execute.assert_called_once()
+
+
+async def test_dispatch_bash_approved_via_bus():
+    """When a handler approves via ToolConfirmationResponse, dispatch proceeds."""
+    from shannon.events import ToolConfirmationRequest, ToolConfirmationResponse
+
+    bus = EventBus()
+    config = ToolsConfig()
+    bash = AsyncMock(execute=AsyncMock(return_value="output"))
+    dispatcher = ToolDispatcher(
+        bash_executor=bash,
+        tools_config=config,
+        bus=bus,
+    )
+
+    async def auto_approve(event: ToolConfirmationRequest) -> None:
+        await bus.publish(ToolConfirmationResponse(
+            request_id=event.request_id, approved=True,
+        ))
+
+    bus.subscribe(ToolConfirmationRequest, auto_approve)
+
+    result = await dispatcher.dispatch(_make_call("bash", {"command": "ls"}))
+    assert result == "output"
