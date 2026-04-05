@@ -1,7 +1,168 @@
 """Tests for Discord voice support."""
 
+import asyncio
 import struct
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from shannon.bus import EventBus
+from shannon.config import VoiceConfig
+from shannon.events import VoiceStateChange
+
+
+# ---------------------------------------------------------------------------
+# VoiceManager test helpers
+# ---------------------------------------------------------------------------
+
+class FakeVoiceClient:
+    """Mock discord.VoiceClient."""
+    def __init__(self):
+        self.is_connected_val = True
+        self.disconnect = AsyncMock()
+        self.play = MagicMock()
+        self.is_playing = MagicMock(return_value=False)
+        self._connection = MagicMock()
+        self._connection.secret_key = [0] * 32
+        self._connection.add_socket_listener = MagicMock()
+        self._connection.remove_socket_listener = MagicMock()
+
+    def is_connected(self):
+        return self.is_connected_val
+
+
+class FakeGuild:
+    def __init__(self, guild_id="guild_1"):
+        self.id = guild_id
+
+
+class FakeVoiceChannel:
+    def __init__(self, channel_id="vc_1", guild_id="guild_1"):
+        self.id = channel_id
+        self.guild = FakeGuild(guild_id)
+        self.members = []
+        self.connect = AsyncMock(return_value=FakeVoiceClient())
+
+
+class FakeMember:
+    def __init__(self, user_id="user_1", name="Alice", bot=False):
+        self.id = user_id
+        self.display_name = name
+        self.bot = bot
+
+
+class FakeVoiceState:
+    def __init__(self, channel=None):
+        self.channel = channel
+
+
+def _make_voice_manager(**kwargs):
+    from shannon.messaging.providers.discord_voice import VoiceManager
+    bus = EventBus()
+    client = MagicMock()
+    client.voice_clients = []
+    stt = AsyncMock()
+    tts = AsyncMock()
+    config = VoiceConfig(**kwargs)
+    vm = VoiceManager(client=client, stt=stt, tts=tts, bus=bus, config=config)
+    return vm, bus, client
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_auto_joins_on_user_enter():
+    """VoiceManager joins when a non-bot user enters a configured channel."""
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=["vc_1"])
+    client.voice_clients = []
+
+    channel = FakeVoiceChannel("vc_1")
+    channel.members = [FakeMember()]
+    member = FakeMember("user_1", "Alice")
+    before = FakeVoiceState(channel=None)
+    after = FakeVoiceState(channel=channel)
+
+    await vm.handle_voice_state_update(member, before, after)
+    channel.connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_ignores_bot_joins():
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=["vc_1"])
+    client.voice_clients = []
+
+    channel = FakeVoiceChannel("vc_1")
+    member = FakeMember("bot_1", "OtherBot", bot=True)
+    before = FakeVoiceState(channel=None)
+    after = FakeVoiceState(channel=channel)
+
+    await vm.handle_voice_state_update(member, before, after)
+    channel.connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_ignores_unconfigured_channels():
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=["vc_99"])
+    client.voice_clients = []
+
+    channel = FakeVoiceChannel("vc_1")
+    member = FakeMember()
+    before = FakeVoiceState(channel=None)
+    after = FakeVoiceState(channel=channel)
+
+    await vm.handle_voice_state_update(member, before, after)
+    channel.connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_joins_any_channel_when_empty_list():
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=[])
+    client.voice_clients = []
+
+    channel = FakeVoiceChannel("vc_random")
+    channel.members = [FakeMember()]
+    member = FakeMember()
+    before = FakeVoiceState(channel=None)
+    after = FakeVoiceState(channel=channel)
+
+    await vm.handle_voice_state_update(member, before, after)
+    channel.connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_disconnects_when_empty():
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=[])
+
+    channel = FakeVoiceChannel("vc_1")
+    fake_vc = FakeVoiceClient()
+    vm._voice_clients["guild_1"] = fake_vc
+
+    bot = FakeMember("bot_1", "Bot", bot=True)
+    channel.members = [bot]
+    member = FakeMember("user_1", "Alice")
+    before = FakeVoiceState(channel=channel)
+    after = FakeVoiceState(channel=None)
+
+    await vm.handle_voice_state_update(member, before, after)
+    fake_vc.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_voice_manager_publishes_state_change():
+    vm, bus, client = _make_voice_manager(enabled=True, auto_join_channels=[])
+    client.voice_clients = []
+
+    received: list[VoiceStateChange] = []
+    bus.subscribe(VoiceStateChange, lambda e: received.append(e))
+
+    channel = FakeVoiceChannel("vc_1")
+    channel.members = [FakeMember()]
+    member = FakeMember("user_1", "Alice")
+    before = FakeVoiceState(channel=None)
+    after = FakeVoiceState(channel=channel)
+
+    await vm.handle_voice_state_update(member, before, after)
+    await asyncio.sleep(0)
+    assert len(received) == 1
+    assert received[0].user_id == "user_1"
+    assert received[0].channel == "vc_1"
 
 
 # ---------------------------------------------------------------------------
