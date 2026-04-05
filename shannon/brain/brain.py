@@ -146,6 +146,9 @@ class Brain:
                         text=clean_text,
                         platform=event.platform,
                         channel=event.channel,
+                        # NOTE: only the first response in a continue chain gets reply_to.
+                        # Reactions on follow-up messages are dropped (known limitation;
+                        # fixing requires send_message to return message IDs).
                         reply_to=event.message_id if i == 0 else "",
                         reactions=reactions,
                     )

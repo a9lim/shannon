@@ -41,11 +41,10 @@ def split_message(text: str) -> list[str]:
             remaining = remaining[cut:].lstrip("\n")
             continue
 
-        # Try to split on sentence boundary (with margin to avoid edge splits)
-        margin = DISCORD_MAX_LENGTH - 100
+        # Try to split on sentence boundary
         best_sentence = -1
         for punc in (". ", "! ", "? "):
-            idx = remaining.rfind(punc, 0, margin)
+            idx = remaining.rfind(punc, 0, DISCORD_MAX_LENGTH)
             if idx > best_sentence:
                 best_sentence = idx + 1  # include the punctuation mark
 

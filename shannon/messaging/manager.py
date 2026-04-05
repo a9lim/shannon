@@ -131,11 +131,6 @@ class MessagingManager:
     ) -> None:
         """Evaluate response eligibility and debounce before publishing."""
         if not self._should_respond(platform, channel_id, is_reply_to_bot, is_mention, is_in_conversation):
-            # Maybe react even if not responding
-            if self._config.reaction_probability > 0 and random.random() < self._config.reaction_probability:
-                await self._bus.publish(
-                    ChatReaction(emoji="", platform=platform, channel=channel_id, message_id=message_id)
-                )
             return
 
         key = f"{platform}:{channel_id}"
@@ -181,15 +176,16 @@ class MessagingManager:
                             await provider.send_typing(channel_id)
                         except Exception:
                             pass
-                    await asyncio.sleep(self._config.debounce_delay)
+                    try:
+                        await asyncio.sleep(self._config.debounce_delay)
+                    except asyncio.CancelledError:
+                        return
 
                 # Keep typing indicator alive during LLM generation
                 if provider:
                     typing_task = asyncio.create_task(_typing_loop(provider, channel_id))
 
                 await self._bus.publish(event)
-            except asyncio.CancelledError:
-                pass
             finally:
                 if typing_task is not None:
                     typing_task.cancel()
@@ -211,15 +207,13 @@ class MessagingManager:
         if provider is None:
             return
 
-        # Send typing indicator while preparing response
-        try:
-            await provider.send_typing(event.channel)
-        except Exception:
-            pass
-
-        # Send message
-        reply_to = event.reply_to if event.reply_to else None
-        await provider.send_message(event.channel, event.text, reply_to=reply_to)
+        if event.text:
+            try:
+                await provider.send_typing(event.channel)
+            except Exception:
+                pass
+            reply_to = event.reply_to if event.reply_to else None
+            await provider.send_message(event.channel, event.text, reply_to=reply_to)
 
         # Apply reactions
         if event.reactions:

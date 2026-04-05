@@ -695,3 +695,44 @@ async def test_reactions_without_reply_to_are_logged_not_silently_dropped(caplog
     assert len(provider.reactions) == 0, "Reactions should not be applied without reply_to"
     assert any("dropped" in record.message.lower() for record in caplog.records), \
         "Expected a debug log about dropped reactions"
+
+
+@pytest.mark.asyncio
+async def test_no_chat_reaction_on_non_responding_message():
+    """When _should_respond is False, no ChatReaction should be published (F9)."""
+    bus = EventBus()
+    provider = FakeMessagingProvider()
+    config = MessagingConfig(reaction_probability=1.0)
+    manager = MessagingManager(bus=bus, providers=[provider], config=config)
+    await manager.start()
+
+    reactions: list[ChatReaction] = []
+
+    async def capture_reaction(e: ChatReaction):
+        reactions.append(e)
+
+    bus.subscribe(ChatReaction, capture_reaction)
+
+    await provider.simulate_message(
+        text="hello", author="user", channel_id="ch1", message_id="m1",
+    )
+    await asyncio.sleep(0.05)
+    assert len(reactions) == 0
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_no_typing_for_empty_response():
+    """Empty-text ChatResponse should not trigger a typing indicator (F7)."""
+    bus = EventBus()
+    provider = FakeMessagingProvider()
+    manager = MessagingManager(bus=bus, providers=[provider])
+    await manager.start()
+
+    await bus.publish(ChatResponse(
+        text="", platform="fake", channel="ch1", reply_to="m1", reactions=["👍"],
+    ))
+
+    assert "ch1" not in provider.typing_channels
+    assert ("ch1", "m1", "👍") in provider.reactions
+    await manager.stop()
