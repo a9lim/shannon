@@ -363,6 +363,11 @@ class VoiceManager:
         if decrypted is None:
             return
 
+        # DAVE E2EE: second decryption layer if active
+        decrypted = self._dave_decrypt(ssrc, decrypted)
+        if decrypted is None:
+            return
+
         pcm = self._decode_opus(decrypted)
         if pcm is None:
             return
@@ -425,6 +430,37 @@ class VoiceManager:
         except Exception:
             logger.debug("AES-GCM decryption failed", exc_info=True)
             return None
+
+    def _dave_decrypt(self, ssrc: int, data: bytes) -> bytes | None:
+        """Decrypt the DAVE E2EE layer if active, otherwise pass through.
+
+        DAVE (Discord Audio/Video Encryption) is a second encryption layer
+        on top of transport encryption. When active, the transport-decrypted
+        payload is DAVE-encrypted opus, not raw opus.
+
+        Uses davey.DaveSession.decrypt(user_id, media_type, packet).
+        """
+        for vc in self._voice_clients.values():
+            dave_session = getattr(vc._connection, "dave_session", None)
+            if dave_session is None or not dave_session.ready:
+                return data  # No DAVE — pass through
+
+            user_info = self._ssrc_to_user.get(ssrc)
+            if user_info is None:
+                return None
+
+            user_id_int = int(user_info[0])
+            try:
+                import davey
+                result = dave_session.decrypt(user_id_int, davey.MediaType.audio, data)
+                if result is None:
+                    logger.debug("DAVE decrypt returned None for SSRC %d", ssrc)
+                    return None
+                return bytes(result)
+            except Exception:
+                logger.debug("DAVE decryption failed for SSRC %d", ssrc, exc_info=True)
+                return None
+        return data  # No voice clients — pass through
 
     def _decode_opus(self, opus_data: bytes) -> bytes | None:
         """Decode an opus frame to 48kHz stereo PCM.

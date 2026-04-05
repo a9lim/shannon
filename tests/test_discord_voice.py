@@ -635,3 +635,58 @@ def test_voice_manager_updates_ssrc_mapping():
     vm.handle_speaking_update(user_id="user_1", ssrc=20, display_name="Alice")
     assert 10 not in vm._ssrc_to_user
     assert 20 in vm._ssrc_to_user
+
+
+# ---------------------------------------------------------------------------
+# DAVE E2EE tests
+# ---------------------------------------------------------------------------
+
+def test_dave_decrypt_passthrough_when_no_dave():
+    """Without an active DAVE session, data passes through unchanged."""
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    fake_vc = FakeVoiceClient()
+    fake_vc._connection.dave_session = None
+    vm._voice_clients["guild_1"] = fake_vc
+    vm._ssrc_to_user[99] = ("123", "Alice")
+
+    data = b"\xDE\xAD\xBE\xEF"
+    result = vm._dave_decrypt(99, data)
+    assert result == data
+
+
+def test_dave_decrypt_calls_session():
+    """When DAVE is active, data is decrypted via DaveSession."""
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    fake_dave = MagicMock()
+    fake_dave.ready = True
+    fake_dave.decrypt = MagicMock(return_value=b"\xCA\xFE")
+
+    fake_vc = FakeVoiceClient()
+    fake_vc._connection.dave_session = fake_dave
+    vm._voice_clients["guild_1"] = fake_vc
+    vm._ssrc_to_user[99] = ("123", "Alice")
+
+    result = vm._dave_decrypt(99, b"\x00\x01\x02")
+    assert result == b"\xCA\xFE"
+
+    import davey
+    fake_dave.decrypt.assert_called_once_with(123, davey.MediaType.audio, b"\x00\x01\x02")
+
+
+def test_dave_decrypt_returns_none_on_failure():
+    """DAVE decrypt failure returns None."""
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    fake_dave = MagicMock()
+    fake_dave.ready = True
+    fake_dave.decrypt = MagicMock(return_value=None)
+
+    fake_vc = FakeVoiceClient()
+    fake_vc._connection.dave_session = fake_dave
+    vm._voice_clients["guild_1"] = fake_vc
+    vm._ssrc_to_user[99] = ("123", "Alice")
+
+    result = vm._dave_decrypt(99, b"\x00\x01")
+    assert result is None
