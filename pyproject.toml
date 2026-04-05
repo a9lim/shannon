@@ -19,11 +19,12 @@ tts = [
     "sentence-stream>=1.0.0",
     "pathvalidate>=3.0.0",
 ]
+coqui = ["coqui-tts>=0.24.0"]
 stt = ["faster-whisper>=1.0.0"]
 vtuber = ["websockets>=12.0"]
 messaging = ["discord.py>=2.3.0"]
 voice = ["PyNaCl>=1.5.0", "davey>=0.1.0"]
-all = ["shannon[computer,vision,tts,stt,vtuber,messaging,voice]"]
+all = ["shannon[computer,vision,tts,coqui,stt,vtuber,messaging,voice]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

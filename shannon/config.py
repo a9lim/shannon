@@ -47,6 +47,7 @@ class TTSConfig:
     type: str = "piper"
     model: str = "en_US-lessac-medium"
     rate: float = 1.0
+    speaker: str = ""
 
 
 @dataclass

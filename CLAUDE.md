@@ -7,7 +7,7 @@ AI VTuber powered by Claude. Async event bus architecture with direct Anthropic 
 ```bash
 pip install -e ".[dev]"           # Core + test deps
 pip install -e ".[all,dev]"       # All optional providers
-python3 -m pytest tests/ -v       # Run tests (396 tests, ~29s)
+python3 -m pytest tests/ -v       # Run tests (478 tests, ~29s)
 shannon                           # Run (needs API key in config.yaml or ANTHROPIC_API_KEY env var)
 shannon --speech                  # Speech I/O mode
 shannon --dangerously-skip-permissions  # Skip tool confirmation prompts
@@ -94,7 +94,20 @@ When the tool loop exhausts its maximum iterations without completing, the brain
 
 Shannon can join Discord voice channels for full-duplex audio communication. Requires `--speech` flag and `messaging.voice.enabled: true`.
 
-**How it works:** VoiceManager auto-joins configured voice channels when users enter, captures per-user audio via raw UDP socket listener (RTP parse → transport decrypt → DAVE E2EE decrypt → opus decode → PCM buffer), batches on silence gaps, transcribes via Whisper STT, and sends the combined input to the brain. Responses are synthesized via Piper TTS and played back through the VoiceClient.
+**How it works:** VoiceManager auto-joins configured voice channels when users enter, captures per-user audio via raw UDP socket listener (RTP parse → transport decrypt → DAVE E2EE decrypt → opus decode → PCM buffer), batches on silence gaps, transcribes via Whisper STT, and sends the combined input to the brain. Responses are synthesized via the configured TTS provider and played back through the VoiceClient.
+
+**TTS providers:** Configured via `tts.type` in config. Two backends:
+- **Piper** (`tts.type: piper`) — lightweight, CPU-friendly, preset voices. Install with `pip install 'shannon[tts]'`. Auto-detects pinyin models for cross-language synthesis.
+- **Coqui** (`tts.type: coqui`) — higher quality, more voices, heavier (GPU recommended). Install with `pip install 'shannon[coqui]'`. Supports multi-speaker models via `tts.speaker` config field (e.g., `tts.speaker: p225` for VCTK). No streaming API — synthesizes full text then yields.
+
+Config fields: `tts.type` ("piper" or "coqui"), `tts.model` (model path for Piper, model name like `tts_models/en/ljspeech/tacotron2-DDC` for Coqui), `tts.speaker` (multi-speaker model speaker ID, Coqui only), `tts.rate` (speech rate, Piper only).
+
+**Cross-language TTS:** `PiperProvider` auto-detects pinyin-type models (e.g., `zh_CN-xiao_ya-medium`) and routes English text through `en_to_pinyin.py` instead of the Chinese G2P. Pipeline: espeak-ng IPA → approximate pinyin phonemes → custom `pinyin_to_ids` (English-tuned padding) → `phoneme_ids_to_audio`. Key design decisions in the converter:
+- **Vowel mapping**: pinyin `e` = [ɤ] (not schwa), so IPA `ə` maps to `a` (stressed/after h) or `e` (unstressed, consonant-dependent). Labial onsets (b/p/m/f) use `u` for schwa since `be`/`pe`/`fe` are invalid pinyin.
+- **Consonant codas**: Mandarin only allows -n/-ng codas. Stops always drop ("had"→ha). Sibilants always keep as syllabic (si5≈[s]). Others (f, etc.) keep only in stressed syllables. Coda `l` vocalizes to `ou` (dark L ≈ [ʊ]), coda `ɹ` produces an `er` syllable.
+- **Palatalization**: s→x, z→j, sh→x, zh→j, ch→q before true [i] finals (not epenthetic si5/zi5).
+- **Onset clusters**: epenthetic vowel borrows from next semivowel (k before w→ku, t before w→tu). Sibilants get `i`, labials get `u`, others get `e`.
+- **Timing**: tone 5 (neutral) for unstressed syllables (shorter in model). Custom `pinyin_to_ids` pads only after tones and real punctuation, not spaces — words flow together within phrases.
 
 **Decryption chain:** Transport layer (XSalsa20-Poly1305 legacy or AEAD-AES256-GCM modern, auto-detected from negotiated mode) → DAVE E2EE layer (via `davey.DaveSession.decrypt`, transparent passthrough when DAVE is not active). Thread-safe: socket reader thread accesses shared buffers and opus decoder under a `threading.Lock`.
 
@@ -135,7 +148,7 @@ shannon/
 │   ├── executor.py     # ComputerUseExecutor (pyautogui)
 │   └── screenshot.py
 ├── input/              # InputManager + STTProvider (text.py, whisper.py)
-├── output/             # OutputManager + TTSProvider (piper.py) + VTuberProvider (vtube_studio.py)
+├── output/             # OutputManager + TTSProvider (piper.py, coqui.py, en_to_pinyin.py) + VTuberProvider (vtube_studio.py)
 ├── vision/             # VisionManager + VisionProvider (screen.py, webcam.py)
 ├── autonomy/           # AutonomyLoop (idle timeout, screen change triggers)
 └── messaging/          # MessagingManager + MessagingProvider (discord.py, discord_voice.py)

@@ -176,6 +176,18 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
                     "piper-tts not installed; speech output unavailable. "
                     "Install with: pip install piper-tts"
                 )
+        elif tts_type == "coqui":
+            try:
+                from shannon.output.providers.tts.coqui import CoquiProvider
+                tts_provider = CoquiProvider(
+                    model_name=config.tts.model,
+                    speaker=config.tts.speaker,
+                )
+            except ImportError:
+                logger.warning(
+                    "coqui-tts not installed; speech output unavailable. "
+                    "Install with: pip install coqui-tts"
+                )
 
     # ------------------------------------------------------------------
     # Brain
