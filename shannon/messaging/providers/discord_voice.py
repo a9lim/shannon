@@ -427,5 +427,31 @@ class VoiceManager:
         ))
 
     async def _on_voice_output(self, event: Any) -> None:
-        """Handle VoiceOutput event."""
-        pass  # Implemented in Task 12
+        """Handle VoiceOutput event: play TTS audio in the voice channel."""
+        target_channel = event.channel
+
+        target_vc = None
+        for vc in self._voice_clients.values():
+            if hasattr(vc, "channel") and vc.channel and str(vc.channel.id) == target_channel:
+                target_vc = vc
+                break
+
+        if target_vc is None:
+            logger.debug("No voice client for channel %s, dropping VoiceOutput", target_channel)
+            return
+
+        # Wait for any current playback to finish (sequential queuing)
+        while target_vc.is_playing():
+            await asyncio.sleep(0.1)
+
+        source = ChunkAudioSource(event.audio, volume=self._config.volume)
+
+        if self._config.mute_during_playback:
+            self._muted = True
+
+        def after_play(error: Exception | None) -> None:
+            self._muted = False
+            if error:
+                logger.warning("Error during voice playback: %s", error)
+
+        target_vc.play(source, after=after_play)

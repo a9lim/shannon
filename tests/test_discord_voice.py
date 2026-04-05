@@ -481,6 +481,72 @@ async def test_silence_monitor_skips_when_still_speaking():
 
 
 @pytest.mark.asyncio
+async def test_voice_output_plays_audio():
+    """VoiceOutput event should trigger playback on the correct voice client."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+    from shannon.output.providers.tts.base import AudioChunk
+    from shannon.events import VoiceOutput
+
+    vm, bus, client = _make_voice_manager(enabled=True, volume=1.0)
+
+    fake_vc = FakeVoiceClient()
+    fake_vc.channel = FakeVoiceChannel("vc_1")
+    vm._voice_clients["guild_1"] = fake_vc
+
+    chunk = AudioChunk(data=b"\x00" * 4410, sample_rate=22050, channels=1)
+    event = VoiceOutput(audio=chunk, channel="vc_1")
+
+    await vm._on_voice_output(event)
+
+    fake_vc.play.assert_called_once()
+    source = fake_vc.play.call_args[0][0]
+    assert hasattr(source, "read")
+    assert hasattr(source, "is_opus")
+
+
+@pytest.mark.asyncio
+async def test_voice_output_mutes_during_playback():
+    """VoiceManager should set _muted=True while playing."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+    from shannon.output.providers.tts.base import AudioChunk
+    from shannon.events import VoiceOutput
+
+    vm, bus, client = _make_voice_manager(enabled=True, mute_during_playback=True)
+
+    fake_vc = FakeVoiceClient()
+    fake_vc.channel = FakeVoiceChannel("vc_1")
+    fake_vc.is_playing = MagicMock(return_value=False)
+    vm._voice_clients["guild_1"] = fake_vc
+
+    chunk = AudioChunk(data=b"\x00" * 4410, sample_rate=22050, channels=1)
+    event = VoiceOutput(audio=chunk, channel="vc_1")
+
+    muted_during_play = None
+    def capture_play(source, **kwargs):
+        nonlocal muted_during_play
+        muted_during_play = vm._muted
+    fake_vc.play = capture_play
+
+    await vm._on_voice_output(event)
+    assert muted_during_play is True
+
+
+@pytest.mark.asyncio
+async def test_voice_output_no_matching_channel():
+    """VoiceOutput for a channel we're not in should be silently dropped."""
+    from shannon.messaging.providers.discord_voice import VoiceManager
+    from shannon.output.providers.tts.base import AudioChunk
+    from shannon.events import VoiceOutput
+
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    chunk = AudioChunk(data=b"\x00" * 100, sample_rate=22050, channels=1)
+    event = VoiceOutput(audio=chunk, channel="nonexistent")
+
+    await vm._on_voice_output(event)  # Should not raise
+
+
+@pytest.mark.asyncio
 async def test_silence_monitor_multiple_speakers():
     """Multiple speakers should each be transcribed independently."""
     from shannon.messaging.providers.discord_voice import VoiceManager, UserAudioBuffer
