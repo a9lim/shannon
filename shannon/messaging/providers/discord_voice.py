@@ -286,12 +286,48 @@ class VoiceManager:
             self._voice_clients.pop(guild_id, None)
             logger.info("Left voice channel in guild %s (empty)", guild_id)
 
+    def handle_speaking_update(self, user_id: str, ssrc: int, display_name: str) -> None:
+        """Register or update SSRC-to-user mapping from a SPEAKING event."""
+        old_ssrcs = [s for s, (uid, _) in self._ssrc_to_user.items() if uid == user_id]
+        for old_ssrc in old_ssrcs:
+            del self._ssrc_to_user[old_ssrc]
+        self._ssrc_to_user[ssrc] = (user_id, display_name)
+        logger.debug("SSRC %d -> user %s (%s)", ssrc, user_id, display_name)
+
     def _register_audio_listener(self, vc: Any) -> None:
         """Register a socket listener on the VoiceClient to receive raw UDP packets."""
         try:
             vc._connection.add_socket_listener(self._on_udp_packet)
         except Exception:
             logger.exception("Failed to register socket listener")
+        self._hook_speaking_events(vc)
+
+    def _hook_speaking_events(self, vc: Any) -> None:
+        """Monkey-patch the voice websocket to intercept SPEAKING events."""
+        try:
+            ws = vc.ws
+            if ws is None:
+                return
+            original_received = ws.received_message
+
+            async def patched_received(msg: Any) -> None:
+                if isinstance(msg, dict) and msg.get("op") == 5:
+                    data = msg.get("d", {})
+                    user_id = data.get("user_id", "")
+                    ssrc = data.get("ssrc", 0)
+                    if user_id and ssrc:
+                        display_name = str(user_id)
+                        if hasattr(vc, "channel") and vc.channel:
+                            for m in vc.channel.members:
+                                if str(m.id) == str(user_id):
+                                    display_name = m.display_name
+                                    break
+                        self.handle_speaking_update(str(user_id), ssrc, display_name)
+                await original_received(msg)
+
+            ws.received_message = patched_received
+        except Exception:
+            logger.debug("Failed to hook speaking events", exc_info=True)
 
     def _unregister_audio_listener(self, vc: Any) -> None:
         """Remove the socket listener."""
