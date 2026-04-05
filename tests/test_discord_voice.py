@@ -45,3 +45,48 @@ def test_pcm_mono_to_48k_stereo_passthrough():
 
     # Stereo = 2x the bytes
     assert len(result) == num_samples * 4  # 2 channels * 2 bytes
+
+
+# ---------------------------------------------------------------------------
+# RTP header parsing tests
+# ---------------------------------------------------------------------------
+
+def test_parse_rtp_header():
+    """Parse a valid RTP header to extract sequence, timestamp, ssrc."""
+    from shannon.messaging.providers.discord_voice import parse_rtp_header
+
+    # Build a fake RTP packet: version=2, no padding/extension, payload type 120
+    # Sequence: 42, Timestamp: 12345, SSRC: 99
+    header = struct.pack(">BBHII", 0x80, 120, 42, 12345, 99)
+    payload = b"\xDE\xAD\xBE\xEF"
+    packet = header + payload
+
+    seq, ts, ssrc, data = parse_rtp_header(packet)
+    assert seq == 42
+    assert ts == 12345
+    assert ssrc == 99
+    assert data == payload
+
+
+def test_parse_rtp_header_with_extension():
+    """RTP packets with header extension should skip the extension bytes."""
+    from shannon.messaging.providers.discord_voice import parse_rtp_header
+
+    # Extension bit set (0x90 instead of 0x80)
+    header = struct.pack(">BBHII", 0x90, 120, 1, 100, 50)
+    # Extension header: profile=0xBEDE, length=1 (1 * 4 bytes of extension data)
+    ext_header = struct.pack(">HH", 0xBEDE, 1)
+    ext_data = b"\x00\x00\x00\x00"
+    payload = b"\xCA\xFE"
+    packet = header + ext_header + ext_data + payload
+
+    seq, ts, ssrc, data = parse_rtp_header(packet)
+    assert seq == 1
+    assert ssrc == 50
+    assert data == payload
+
+
+def test_parse_rtp_header_too_short():
+    """Packets shorter than 12 bytes should return None."""
+    from shannon.messaging.providers.discord_voice import parse_rtp_header
+    assert parse_rtp_header(b"\x00" * 5) is None

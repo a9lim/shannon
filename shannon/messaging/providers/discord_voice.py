@@ -4,8 +4,42 @@ from __future__ import annotations
 
 import audioop
 import logging
+import struct
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# RTP header parsing
+# ---------------------------------------------------------------------------
+
+def parse_rtp_header(packet: bytes) -> tuple[int, int, int, bytes] | None:
+    """Parse RTP header, return (sequence, timestamp, ssrc, payload) or None.
+
+    Handles the optional header extension (X bit). Returns the payload bytes
+    after the RTP header (and extension if present).
+    """
+    if len(packet) < 12:
+        return None
+
+    first_byte = packet[0]
+    has_extension = bool(first_byte & 0x10)
+    cc = first_byte & 0x0F  # CSRC count
+
+    seq, ts, ssrc = struct.unpack_from(">HII", packet, 2)
+
+    offset = 12 + cc * 4  # skip CSRC list
+
+    if has_extension:
+        if len(packet) < offset + 4:
+            return None
+        ext_length = struct.unpack_from(">HH", packet, offset)[1]
+        offset += 4 + ext_length * 4
+
+    if offset > len(packet):
+        return None
+
+    return seq, ts, ssrc, packet[offset:]
 
 
 # ---------------------------------------------------------------------------
