@@ -503,3 +503,75 @@ def test_clamp_returns_boundary_not_default():
     assert _clamp(-1.0, 0, 60, "test") == 0.0
     assert _clamp(100.0, 0, 60, "test") == 60.0
     assert _clamp(5.0, 0, 60, "test") == 5.0
+
+
+# --- Voice config tests ---
+
+def test_voice_config_defaults():
+    from shannon.config import VoiceConfig
+    vc = VoiceConfig()
+    assert vc.enabled is False
+    assert vc.auto_join_channels == []
+    assert vc.silence_threshold == 2.0
+    assert vc.buffer_max_seconds == 30.0
+    assert vc.voice_reply_probability == 1.0
+    assert vc.mute_during_playback is True
+    assert vc.volume == 1.0
+
+
+def test_voice_config_clamps_silence_threshold():
+    from shannon.config import VoiceConfig
+    vc = VoiceConfig(silence_threshold=0.1)
+    assert vc.silence_threshold == 0.5
+    vc2 = VoiceConfig(silence_threshold=99.0)
+    assert vc2.silence_threshold == 10.0
+
+
+def test_voice_config_clamps_buffer_max():
+    from shannon.config import VoiceConfig
+    vc = VoiceConfig(buffer_max_seconds=1.0)
+    assert vc.buffer_max_seconds == 5.0
+    vc2 = VoiceConfig(buffer_max_seconds=999.0)
+    assert vc2.buffer_max_seconds == 60.0
+
+
+def test_voice_config_clamps_reply_probability():
+    from shannon.config import VoiceConfig
+    vc = VoiceConfig(voice_reply_probability=-1.0)
+    assert vc.voice_reply_probability == 0.0
+    vc2 = VoiceConfig(voice_reply_probability=5.0)
+    assert vc2.voice_reply_probability == 1.0
+
+
+def test_voice_config_clamps_volume():
+    from shannon.config import VoiceConfig
+    vc = VoiceConfig(volume=-0.5)
+    assert vc.volume == 0.0
+    vc2 = VoiceConfig(volume=10.0)
+    assert vc2.volume == 2.0
+
+
+def test_messaging_config_has_voice():
+    from shannon.config import MessagingConfig
+    mc = MessagingConfig()
+    assert hasattr(mc, "voice")
+    assert mc.voice.enabled is False
+
+
+def test_voice_config_merges_from_yaml(tmp_path):
+    import yaml
+    from shannon.config import load_config
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({
+        "messaging": {
+            "voice": {
+                "enabled": True,
+                "silence_threshold": 3.0,
+                "auto_join_channels": ["12345"],
+            }
+        }
+    }))
+    config = load_config(str(config_file))
+    assert config.messaging.voice.enabled is True
+    assert config.messaging.voice.silence_threshold == 3.0
+    assert config.messaging.voice.auto_join_channels == ["12345"]

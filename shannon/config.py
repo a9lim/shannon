@@ -81,6 +81,25 @@ class VTuberConfig:
 
 
 @dataclass
+class VoiceConfig:
+    enabled: bool = False
+    auto_join_channels: list[str] = field(default_factory=list)
+    silence_threshold: float = 2.0
+    buffer_max_seconds: float = 30.0
+    voice_reply_probability: float = 1.0
+    mute_during_playback: bool = True
+    volume: float = 1.0
+
+    def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
+        self.silence_threshold = _clamp(self.silence_threshold, 0.5, 10.0, "silence_threshold")
+        self.buffer_max_seconds = _clamp(self.buffer_max_seconds, 5.0, 60.0, "buffer_max_seconds")
+        self.voice_reply_probability = _clamp(self.voice_reply_probability, 0, 1, "voice_reply_probability")
+        self.volume = _clamp(self.volume, 0, 2, "volume")
+
+
+@dataclass
 class MessagingConfig:
     type: str = "discord"
     enabled: bool = False
@@ -91,6 +110,7 @@ class MessagingConfig:
     conversation_expiry: float = 300.0
     max_context_messages: int = 20
     admin_ids: list[str] = field(default_factory=list)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
 
     def __post_init__(self) -> None:
         if _SKIP_VALIDATION:
