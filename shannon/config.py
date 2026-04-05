@@ -200,11 +200,29 @@ def _merge_dataclass(instance: Any, overrides: dict) -> None:
     """Recursively merge a dict of overrides into a dataclass instance."""
     for key, value in overrides.items():
         if not hasattr(instance, key):
+            _log.warning("Unknown config key %r — ignored (typo?)", key)
             continue
         current = getattr(instance, key)
         if isinstance(value, dict) and hasattr(current, "__dataclass_fields__"):
             _merge_dataclass(current, value)
         else:
+            # Type coercion: bool before int (bool is subclass of int)
+            if isinstance(current, list) and not isinstance(value, list):
+                value = [value] if value is not None else []
+            elif isinstance(current, bool) and not isinstance(value, bool):
+                value = bool(value)
+            elif isinstance(current, int) and not isinstance(value, (int, bool)):
+                try:
+                    value = int(value)
+                except (ValueError, TypeError):
+                    _log.warning("Cannot convert %r to int for %s; skipping", value, key)
+                    continue
+            elif isinstance(current, float) and not isinstance(value, (float, int)):
+                try:
+                    value = float(value)
+                except (ValueError, TypeError):
+                    _log.warning("Cannot convert %r to float for %s; skipping", value, key)
+                    continue
             setattr(instance, key, value)
     # Re-run validation after merging overrides
     if hasattr(instance, "__post_init__"):

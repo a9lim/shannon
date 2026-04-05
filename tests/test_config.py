@@ -461,6 +461,24 @@ class TestConfigValidation:
         assert cfg.idle_timeout_seconds >= 1
 
 
+class TestMergeDataclassCoercion:
+    def test_merge_dataclass_coerces_string_to_list(self, tmp_path):
+        """A scalar YAML value for a list field should be wrapped in a list."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("messaging:\n  admin_ids: 'alice'\n")
+        cfg = load_config(str(config_file))
+        assert isinstance(cfg.messaging.admin_ids, list)
+        assert cfg.messaging.admin_ids == ["alice"]
+
+    def test_merge_dataclass_warns_on_unknown_key(self, tmp_path, caplog):
+        """Unknown config keys should log a warning, not be silently ignored."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("messaging:\n  typo_field: 42\n")
+        with caplog.at_level(logging.WARNING):
+            load_config(str(config_file))
+        assert any("typo_field" in r.message for r in caplog.records)
+
+
 class TestBuildDefaults:
     def test_build_defaults_has_all_llm_fields(self):
         """_build_defaults must produce an LLMConfig with every declared field."""
