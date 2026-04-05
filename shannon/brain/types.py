@@ -19,6 +19,17 @@ class LLMMessage:
 
 
 @dataclass(frozen=True)
+class GenerationRequest:
+    """Everything the brain needs to produce a response — immutable after creation."""
+    text: str
+    images: list[bytes] = field(default_factory=list)
+    dynamic_context: str = ""
+    tool_mode: str = "full"
+    channel_id: str = ""
+    participants: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class LLMToolCall:
     """A tool call requested by the LLM."""
     id: str

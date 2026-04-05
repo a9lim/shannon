@@ -16,6 +16,12 @@ class FakeClaude:
         return LLMResponse(text=f"Response #{self.call_count}", tool_calls=[], stop_reason="end_turn")
 
 class FakeDispatcher:
+    def __init__(self):
+        self.channel_id = ""
+        self.participants = {}
+    def set_context(self, channel_id, participants):
+        self.channel_id = channel_id
+        self.participants = dict(participants)
     async def dispatch(self, tc): return "ok"
     @staticmethod
     def is_continue(name): return name == "continue"

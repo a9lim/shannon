@@ -184,15 +184,14 @@ class ClaudeClient:
     # Public API
     # ------------------------------------------------------------------
 
-    async def generate(
+    def _build_kwargs(
         self,
-        messages: list[LLMMessage],
+        api_messages: list[dict[str, Any]],
+        system_blocks: list[dict[str, Any]] | None = None,
         tools: list[dict[str, Any]] | None = None,
         betas: list[str] | None = None,
-    ) -> LLMResponse:
-        """Generate a response using streaming and return the final message."""
-        system_blocks, api_messages = self._build_messages(messages)
-
+    ) -> dict[str, Any]:
+        """Build kwargs dict shared across API calls."""
         kwargs: dict[str, Any] = {
             "model": self._config.model,
             "max_tokens": self._config.max_tokens,
@@ -215,6 +214,18 @@ class ClaudeClient:
             kwargs["context_management"] = {
                 "edits": [{"type": "compact_20260112"}]
             }
+
+        return kwargs
+
+    async def generate(
+        self,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        betas: list[str] | None = None,
+    ) -> LLMResponse:
+        """Generate a response using streaming and return the final message."""
+        system_blocks, api_messages = self._build_messages(messages)
+        kwargs = self._build_kwargs(api_messages, system_blocks, tools, betas)
 
         logger.debug(
             "Claude API request: model=%s, max_tokens=%d, messages=%d",

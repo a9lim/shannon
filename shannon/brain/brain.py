@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from shannon.brain.prompt import PromptBuilder
 from shannon.brain.reactions import extract_reactions
-from shannon.brain.types import LLMMessage, LLMToolCall, LLMResponse
+from shannon.brain.types import GenerationRequest, LLMMessage, LLMToolCall, LLMResponse
 from shannon.bus import EventBus
 from shannon.config import ShannonConfig
 from shannon.events import (
@@ -96,7 +96,7 @@ class Brain:
 
     async def _on_user_input(self, event: UserInput) -> None:
         logger.debug("Received UserInput: %r", event.text)
-        await self._process_input(text=event.text, images=[])
+        await self._process_input(GenerationRequest(text=event.text))
 
     async def _on_chat_message(self, event: ChatMessage) -> None:
         logger.debug("Received ChatMessage from %s/%s: %r", event.platform, event.channel, event.text)
@@ -129,7 +129,15 @@ class Brain:
             suffix_parts.append(f"Participants: {', '.join(names)}")
         dynamic_context = "\n".join(suffix_parts)
 
-        responses = await self._process_input(text=text, images=images, dynamic_context=dynamic_context, tool_mode="chat")
+        request = GenerationRequest(
+            text=text,
+            images=images,
+            dynamic_context=dynamic_context,
+            tool_mode="chat",
+            channel_id=event.channel,
+            participants=event.participants,
+        )
+        responses = await self._process_input(request)
         for i, response_text in enumerate(responses):
             clean_text, reactions = extract_reactions(response_text)
             if clean_text or reactions:
@@ -157,11 +165,10 @@ class Brain:
             )
 
     async def _on_autonomous_trigger(self, event: AutonomousTrigger) -> None:
-        await self._process_input(
+        await self._process_input(GenerationRequest(
             text=f"[Autonomous trigger: {event.reason}] {event.context}",
-            images=[],
             tool_mode="chat",
-        )
+        ))
 
     async def _on_vision_frame(self, event: VisionFrame) -> None:
         self._vision_buffer.append(event)
@@ -172,7 +179,7 @@ class Brain:
     # Core processing
     # ------------------------------------------------------------------
 
-    async def _process_input(self, text: str, images: list[bytes], dynamic_context: str = "", tool_mode: str = "full") -> list[str]:
+    async def _process_input(self, request: GenerationRequest) -> list[str]:
         """Build context, call LLM, process tool calls, emit events.
 
         Returns a list of response texts. Multiple entries when the LLM uses
@@ -189,23 +196,38 @@ class Brain:
             system_prompt = self._prompt_builder.build()
 
             # Prepend dynamic context (emojis, participants) to user message
-            if dynamic_context:
-                text = f"[Context: {dynamic_context}]\n{text}"
+            text = request.text
+            if request.dynamic_context:
+                text = f"[Context: {request.dynamic_context}]\n{text}"
 
             # Build messages list
             messages: list[LLMMessage] = [
                 LLMMessage(role="system", content=system_prompt)
             ]
-            if self._config.memory.conversation_window > 0:
-                messages.extend(self._history[-(self._config.memory.conversation_window * 2):])
+            max_history = self._config.memory.max_session_messages
+            if max_history > 0:
+                # Copy to prevent mutation of stored history during the tool loop
+                messages.extend(
+                    LLMMessage(
+                        role=m.role,
+                        content=m.content if isinstance(m.content, str) else list(m.content),
+                        images=list(m.images),
+                        tool_calls=list(m.tool_calls),
+                        tool_results=list(m.tool_results),
+                    )
+                    for m in self._history[-max_history:]
+                )
 
             # Current user turn
-            user_msg = LLMMessage(role="user", content=text, images=vision_images + images)
+            user_msg = LLMMessage(role="user", content=text, images=vision_images + list(request.images))
             messages.append(user_msg)
 
             # Build tool list and betas from registry
-            tools = self._registry.build(mode=tool_mode)
+            tools = self._registry.build(mode=request.tool_mode)
             betas = self._registry.beta_headers()
+
+            # Set conversation context on dispatcher for this turn
+            self._dispatcher.set_context(request.channel_id, request.participants)
 
             max_continues = getattr(self._config.memory, "max_continues", MAX_CONTINUE_DEFAULT)
             all_responses: list[str] = []
@@ -344,15 +366,18 @@ class Brain:
                     )
 
             # ---- Persist to history ----
-            # Store text-only version in history (images are one-time context, not worth replaying)
-            self._history.append(LLMMessage(role="user", content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content)))
+            # Store text-only copies in history (images are one-time context)
+            self._history.append(LLMMessage(
+                role="user",
+                content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content),
+            ))
             combined_text = "\n\n".join(all_responses)
-            self._history.append(
-                LLMMessage(role="assistant", content=combined_text)
-            )
-            # Trim history (conversation_window counts message pairs)
-            max_entries = self._config.memory.conversation_window * 2
-            if max_entries > 0 and len(self._history) > max_entries:
-                self._history = self._history[-max_entries:]
+            self._history.append(LLMMessage(
+                role="assistant",
+                content=combined_text,
+            ))
+            # Trim history to max_session_messages
+            if max_history > 0 and len(self._history) > max_history:
+                self._history = self._history[-max_history:]
 
             return all_responses

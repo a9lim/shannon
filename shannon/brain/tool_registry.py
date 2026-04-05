@@ -107,6 +107,7 @@ class ToolRegistry:
         if self._config.llm.compaction:
             headers.append("compact-2026-01-12")
 
-        headers.append("context-1m-2025-08-07")
+        if self._config.llm.enable_1m_context:
+            headers.append("context-1m-2025-08-07")
 
         return headers

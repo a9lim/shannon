@@ -158,21 +158,41 @@ class MessagingManager:
             participants=participants or {},
         )
 
-        async def _debounced_publish() -> None:
+        async def _typing_loop(provider: "MessagingProvider", ch_id: str) -> None:
+            """Send typing indicators every 5s until cancelled."""
             try:
+                while True:
+                    try:
+                        await provider.send_typing(ch_id)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                pass
+
+        async def _debounced_publish() -> None:
+            typing_task: asyncio.Task | None = None
+            try:
+                provider = self._providers.get(platform)
                 if self._config.debounce_delay > 0:
                     # Show typing during debounce
-                    provider = self._providers.get(platform)
                     if provider:
                         try:
                             await provider.send_typing(channel_id)
                         except Exception:
                             pass
                     await asyncio.sleep(self._config.debounce_delay)
+
+                # Keep typing indicator alive during LLM generation
+                if provider:
+                    typing_task = asyncio.create_task(_typing_loop(provider, channel_id))
+
                 await self._bus.publish(event)
             except asyncio.CancelledError:
                 pass
             finally:
+                if typing_task is not None:
+                    typing_task.cancel()
                 # Only remove if we're still the current pending task; a newer
                 # message may have already replaced our entry in _pending.
                 if self._pending.get(key) is task:

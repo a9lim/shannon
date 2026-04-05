@@ -73,6 +73,12 @@ class FakeClaude:
 class FakeDispatcher:
     def __init__(self):
         self.dispatched = []
+        self.channel_id = ""
+        self.participants = {}
+
+    def set_context(self, channel_id, participants):
+        self.channel_id = channel_id
+        self.participants = dict(participants)
 
     async def dispatch(self, tool_call):
         self.dispatched.append(tool_call)
@@ -591,6 +597,14 @@ async def test_brain_concurrent_inputs_are_serialized():
 class RaisingDispatcher:
     """Dispatcher that raises RuntimeError on every dispatch call."""
 
+    def __init__(self):
+        self.channel_id = ""
+        self.participants = {}
+
+    def set_context(self, channel_id, participants):
+        self.channel_id = channel_id
+        self.participants = dict(participants)
+
     async def dispatch(self, tool_call):
         raise RuntimeError("Simulated executor failure")
 
@@ -686,8 +700,8 @@ async def test_brain_pause_turn_preserves_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_brain_conversation_window_zero_means_no_history():
-    """conversation_window=0 should mean stateless — no history included in subsequent calls."""
+async def test_brain_max_session_messages_zero_means_no_history():
+    """max_session_messages=0 should mean stateless — no history included in subsequent calls."""
 
     class CapturingClaude:
         def __init__(self):
@@ -701,7 +715,7 @@ async def test_brain_conversation_window_zero_means_no_history():
 
     capturing_claude = CapturingClaude()
     config = ShannonConfig()
-    config.memory.conversation_window = 0
+    config.memory.max_session_messages = 0
     bus = EventBus()
     dispatcher = FakeDispatcher()
     registry = FakeRegistry()

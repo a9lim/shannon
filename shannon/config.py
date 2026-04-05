@@ -26,6 +26,7 @@ class LLMConfig:
     max_tokens: int = 8192
     thinking: bool = True
     compaction: bool = True
+    enable_1m_context: bool = True
     api_key: str = ""
 
     def __post_init__(self) -> None:
@@ -151,11 +152,13 @@ class PersonalityConfig:
 class MemoryConfig:
     dir: str = "memory"
     conversation_window: int = 20
+    max_session_messages: int = 40
     recall_top_k: int = 5
     max_continues: int = 5
 
     def __post_init__(self) -> None:
         self.conversation_window = max(0, self.conversation_window)
+        self.max_session_messages = max(0, self.max_session_messages)
         self.max_continues = max(0, self.max_continues)
 
 

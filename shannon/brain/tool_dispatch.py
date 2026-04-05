@@ -35,6 +35,13 @@ class ToolDispatcher:
         self._computer = computer_executor
         self._bash = bash_executor
         self._text_editor = text_editor_executor
+        self.channel_id: str = ""
+        self.participants: dict[str, str] = {}
+
+    def set_context(self, channel_id: str, participants: dict[str, str]) -> None:
+        """Update the conversation context for the current turn."""
+        self.channel_id = channel_id
+        self.participants = dict(participants)
 
     # ------------------------------------------------------------------
     # Dispatch
