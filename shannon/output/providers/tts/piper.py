@@ -77,23 +77,32 @@ class PiperProvider(TTSProvider):
         self._load()
         assert self._voice is not None
 
-        # piper supports stream_raw which yields numpy arrays of int16
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+
         try:
-            for audio_bytes in self._voice.synthesize_stream_raw(text):  # type: ignore[attr-defined]
-                if isinstance(audio_bytes, (bytes, bytearray)):
-                    raw = bytes(audio_bytes)
-                else:
-                    # numpy array — convert to bytes
-                    raw = audio_bytes.tobytes()
-                yield AudioChunk(
-                    data=raw,
-                    sample_rate=self._voice.config.sample_rate,  # type: ignore[attr-defined]
-                    channels=1,
-                )
+            chunks = await loop.run_in_executor(None, self._stream_sync, text)
+            for chunk in chunks:
+                yield chunk
         except AttributeError:
-            # Fallback: synthesize in one go and yield as single chunk
             chunk = await self.synthesize(text)
             yield chunk
+
+    def _stream_sync(self, text: str) -> list[AudioChunk]:
+        """Collect all stream chunks synchronously — runs in thread pool."""
+        result = []
+        for audio_bytes in self._voice.synthesize_stream_raw(text):  # type: ignore[attr-defined]
+            if isinstance(audio_bytes, (bytes, bytearray)):
+                raw = bytes(audio_bytes)
+            else:
+                raw = audio_bytes.tobytes()
+            result.append(AudioChunk(
+                data=raw,
+                sample_rate=self._voice.config.sample_rate,  # type: ignore[attr-defined]
+                channels=1,
+            ))
+        return result
 
     async def get_phonemes(self, text: str) -> list[str]:
         """Return phoneme strings for the given text using piper's phonemiser."""

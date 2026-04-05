@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -10,6 +11,8 @@ from shannon.output.providers.vtuber.base import VTuberProvider
 
 _PLUGIN_NAME = "Shannon"
 _PLUGIN_DEVELOPER = "Shannon AI"
+
+logger = logging.getLogger(__name__)
 
 
 class VTubeStudioProvider(VTuberProvider):
@@ -122,7 +125,11 @@ class VTubeStudioProvider(VTuberProvider):
                     "authenticationToken": self._auth_token,
                 },
             )
-            await self._recv()
+            resp = await self._recv()
+            if not resp.get("data", {}).get("authenticated"):
+                logger.warning("VTube Studio authentication failed")
+                await self.disconnect()
+                return
 
     async def _inject_mouth(self, value: float) -> None:
         """Inject a MouthOpen parameter value."""
@@ -138,9 +145,9 @@ class VTubeStudioProvider(VTuberProvider):
         )
 
     async def _send(self, message_type: str, data: dict[str, Any]) -> None:
-        """Serialise and send a VTS API message."""
+        """Serialise and send a VTS API message. No-op if disconnected."""
         if self._ws is None:
-            raise RuntimeError("Not connected — call connect() first")
+            return
         payload = {
             "apiName": "VTubeStudioPublicAPI",
             "apiVersion": "1.0",
@@ -148,7 +155,11 @@ class VTubeStudioProvider(VTuberProvider):
             "messageType": message_type,
             "data": data,
         }
-        await self._ws.send(json.dumps(payload))
+        try:
+            await self._ws.send(json.dumps(payload))
+        except Exception:
+            logger.warning("VTube Studio connection lost")
+            self._ws = None
 
     async def _recv(self) -> dict[str, Any]:
         """Receive and deserialise the next VTS API message."""

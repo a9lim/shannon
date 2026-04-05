@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from shannon.events import ExpressionChange, LLMResponse, SpeechEnd, SpeechStart
@@ -85,12 +86,12 @@ class OutputManager:
 
         await self._bus.publish(SpeechStart(duration=duration, phonemes=phonemes))
 
-        # Drive VTuber lip-sync if available
         if self._vtuber is not None:
             await self._vtuber.start_speaking(phonemes=phonemes)
 
-        # NOTE: actual audio playback is intentionally out of scope here.
-        # A real implementation would feed `chunk.data` to a sound device.
+        # Hold mouth open for the estimated audio duration
+        if duration > 0:
+            await asyncio.sleep(duration)
 
         if self._vtuber is not None:
             await self._vtuber.stop_speaking()
