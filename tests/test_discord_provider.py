@@ -84,6 +84,13 @@ class TestSplitMessageSentenceBoundary:
         assert all(len(c) <= 2000 for c in chunks)
 
 
+def test_discord_provider_exposes_client():
+    """DiscordProvider.client returns the internal discord.Client (or None before connect)."""
+    from shannon.messaging.providers.discord import DiscordProvider
+    provider = DiscordProvider(token="fake-token")
+    assert provider.client is None
+
+
 def test_get_guild_emojis_caps_at_50():
     """Guild emoji list should be capped at 50 entries."""
     from shannon.messaging.providers.discord import DiscordProvider

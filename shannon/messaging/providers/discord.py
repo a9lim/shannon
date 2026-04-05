@@ -86,6 +86,11 @@ class DiscordProvider(MessagingProvider):
         self._client: Any = None  # discord.Client, typed as Any to avoid hard import at module level
         self._client_task: Any = None
 
+    @property
+    def client(self) -> Any:
+        """The underlying discord.Client, or None before connect()."""
+        return self._client
+
     # ------------------------------------------------------------------
     # MessagingProvider interface
     # ------------------------------------------------------------------
@@ -97,6 +102,7 @@ class DiscordProvider(MessagingProvider):
 
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.voice_states = True
         self._client = discord.Client(intents=intents)
 
         @self._client.event
