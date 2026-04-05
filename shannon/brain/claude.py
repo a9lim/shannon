@@ -123,7 +123,11 @@ class ClaudeClient:
 
     @staticmethod
     def _normalize_messages(api_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge consecutive same-role messages to ensure strict alternation."""
+        """Merge consecutive same-role messages to ensure strict alternation.
+
+        Messages containing tool_use or tool_result blocks are never merged,
+        to preserve the required tool_use -> tool_result pairing.
+        """
         if not api_messages:
             return api_messages
 
@@ -134,10 +138,21 @@ class ClaudeClient:
                 return [{"type": "text", "text": content}]
             return []
 
+        def _has_tool_blocks(content: Any) -> bool:
+            if not isinstance(content, list):
+                return False
+            return any(
+                isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result")
+                for b in content
+            )
+
         merged: list[dict[str, Any]] = [api_messages[0]]
         for msg in api_messages[1:]:
             prev = merged[-1]
             if prev["role"] == msg["role"]:
+                if _has_tool_blocks(prev["content"]) or _has_tool_blocks(msg["content"]):
+                    merged.append(msg)
+                    continue
                 prev_blocks = _to_blocks(prev["content"])
                 new_blocks = _to_blocks(msg["content"])
                 combined = prev_blocks + new_blocks

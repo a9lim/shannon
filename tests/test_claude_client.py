@@ -280,33 +280,29 @@ class TestNormalizeMessages:
         assert "compacted" in texts
         assert "More text" in texts
 
-    def test_normalize_messages_merges_list_and_string_same_role(self):
-        """Two consecutive user messages: list content then string content merge correctly."""
+    def test_normalize_messages_does_not_merge_tool_result_with_string(self):
+        """A tool_result message must not be merged with an adjacent plain-text message."""
         tool_result_block = {"type": "tool_result", "tool_use_id": "tu_1", "content": "done"}
         msgs = [
             {"role": "user", "content": [tool_result_block]},
             {"role": "user", "content": "Follow-up question"},
         ]
         result = ClaudeClient._normalize_messages(msgs)
-        assert len(result) == 1
-        assert result[0]["role"] == "user"
-        assert isinstance(result[0]["content"], list)
-        assert tool_result_block in result[0]["content"]
-        assert {"type": "text", "text": "Follow-up question"} in result[0]["content"]
+        assert len(result) == 2
+        assert result[0]["content"] == [tool_result_block]
+        assert result[1]["content"] == "Follow-up question"
 
-    def test_normalize_messages_merges_string_and_list_same_role(self):
-        """Two consecutive user messages: string content then list content merge correctly."""
+    def test_normalize_messages_does_not_merge_string_with_tool_result(self):
+        """A plain-text message must not be merged with an adjacent tool_result message."""
         tool_result_block = {"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}
         msgs = [
             {"role": "user", "content": "Initial message"},
             {"role": "user", "content": [tool_result_block]},
         ]
         result = ClaudeClient._normalize_messages(msgs)
-        assert len(result) == 1
-        assert result[0]["role"] == "user"
-        assert isinstance(result[0]["content"], list)
-        assert {"type": "text", "text": "Initial message"} in result[0]["content"]
-        assert tool_result_block in result[0]["content"]
+        assert len(result) == 2
+        assert result[0]["content"] == "Initial message"
+        assert result[1]["content"] == [tool_result_block]
 
     def test_normalize_messages_still_merges_two_strings(self):
         """Backward compatibility: two consecutive string-content messages still merge."""
@@ -336,6 +332,40 @@ class TestNormalizeMessages:
         combined = result[0]["content"]
         assert isinstance(combined, list)
         assert {"type": "text", "text": "Non-empty message"} in combined
+
+
+def test_normalize_does_not_merge_tool_use_messages():
+    """Consecutive assistant messages containing tool_use blocks must not be merged."""
+    client = make_client()
+    messages = [
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "calling tool"},
+            {"type": "tool_use", "id": "tu1", "name": "bash", "input": {}},
+        ]},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "calling another tool"},
+            {"type": "tool_use", "id": "tu2", "name": "bash", "input": {}},
+        ]},
+    ]
+    result = client._normalize_messages(messages)
+    assert len(result) == 2
+    assert result[0]["content"][1]["id"] == "tu1"
+    assert result[1]["content"][1]["id"] == "tu2"
+
+
+def test_normalize_does_not_merge_tool_result_messages():
+    """Consecutive user messages containing tool_result blocks must not be merged."""
+    client = make_client()
+    messages = [
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "ok"},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu2", "content": "ok"},
+        ]},
+    ]
+    result = client._normalize_messages(messages)
+    assert len(result) == 2
 
 
 def test_usage_tracking_initial_state():
