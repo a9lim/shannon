@@ -5,6 +5,7 @@ from __future__ import annotations
 import audioop
 import logging
 import struct
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -68,3 +69,38 @@ def pcm_mono_to_48k_stereo(data: bytes, src_rate: int) -> bytes:
     # Mono to stereo (same amplitude in both channels)
     stereo = audioop.tostereo(data, 2, 1.0, 1.0)
     return stereo
+
+
+# ---------------------------------------------------------------------------
+# Per-user audio buffer
+# ---------------------------------------------------------------------------
+
+class UserAudioBuffer:
+    """Accumulates PCM audio for a single user with max-length cap."""
+
+    def __init__(self, max_seconds: float, sample_rate: int, channels: int) -> None:
+        self._max_bytes = int(max_seconds * sample_rate * channels * 2)  # 16-bit
+        self._buf = bytearray()
+        self._last_activity = time.monotonic()
+
+    @property
+    def has_data(self) -> bool:
+        return len(self._buf) > 0
+
+    @property
+    def silence_seconds(self) -> float:
+        return time.monotonic() - self._last_activity
+
+    def append(self, pcm: bytes) -> None:
+        """Append PCM data, trimming oldest bytes if over cap."""
+        self._buf.extend(pcm)
+        if len(self._buf) > self._max_bytes:
+            excess = len(self._buf) - self._max_bytes
+            del self._buf[:excess]
+        self._last_activity = time.monotonic()
+
+    def drain(self) -> bytes:
+        """Return all buffered data and clear the buffer."""
+        data = bytes(self._buf)
+        self._buf.clear()
+        return data

@@ -90,3 +90,57 @@ def test_parse_rtp_header_too_short():
     """Packets shorter than 12 bytes should return None."""
     from shannon.messaging.providers.discord_voice import parse_rtp_header
     assert parse_rtp_header(b"\x00" * 5) is None
+
+
+# ---------------------------------------------------------------------------
+# UserAudioBuffer tests
+# ---------------------------------------------------------------------------
+
+import time
+
+
+def test_user_audio_buffer_append_and_drain():
+    """Buffer accumulates PCM data and drain clears it."""
+    from shannon.messaging.providers.discord_voice import UserAudioBuffer
+
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+    buf.append(b"\x00" * 3840)  # 20ms frame
+    buf.append(b"\x00" * 3840)
+
+    assert buf.has_data
+    data = buf.drain()
+    assert len(data) == 7680
+    assert not buf.has_data
+
+
+def test_user_audio_buffer_caps_at_max():
+    """Buffer should discard oldest data when exceeding max_seconds."""
+    from shannon.messaging.providers.discord_voice import UserAudioBuffer
+
+    # Max 0.1 seconds at 48kHz stereo = 48000 * 0.1 * 2 * 2 = 19200 bytes
+    buf = UserAudioBuffer(max_seconds=0.1, sample_rate=48000, channels=2)
+
+    # Add 0.2 seconds of data
+    frame = b"\x00" * 3840  # 20ms
+    for _ in range(10):  # 200ms
+        buf.append(frame)
+
+    data = buf.drain()
+    max_bytes = int(48000 * 0.1 * 2 * 2)
+    assert len(data) <= max_bytes + 3840  # allow one extra frame tolerance
+
+
+def test_user_audio_buffer_silence_detection():
+    """silence_seconds should reflect time since last append."""
+    from shannon.messaging.providers.discord_voice import UserAudioBuffer
+
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+
+    assert buf.silence_seconds > 0  # never had data
+
+    buf.append(b"\x00" * 3840)
+    assert buf.silence_seconds < 0.1  # just appended
+
+    # Simulate time passing by backdating last_activity
+    buf._last_activity = time.monotonic() - 3.0
+    assert buf.silence_seconds >= 2.9
