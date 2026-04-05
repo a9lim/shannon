@@ -20,7 +20,11 @@ class LLMMessage:
 
 @dataclass(frozen=True)
 class GenerationRequest:
-    """Everything the brain needs to produce a response — immutable after creation."""
+    """Everything the brain needs to produce a response — immutable after creation.
+
+    Note: frozen=True prevents field reassignment. Contained collections (images,
+    participants) are still mutable by convention but must not be modified after creation.
+    """
     text: str
     images: list[bytes] = field(default_factory=list)
     dynamic_context: str = ""

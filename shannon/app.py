@@ -309,30 +309,30 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         # Wait for cancellations to propagate
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Stop modules
+        # Stop modules in dependency order: messaging first (stop accepting),
+        # then autonomy/vision, then bash, then output, then VTuber/computer.
+        await messaging_manager.stop()
         autonomy_loop.stop()
         vision_manager.stop()
+
         # Release vision provider resources
         for vp in vision_providers:
             try:
                 await vp.close()
             except Exception:
                 logger.debug("Error closing vision provider", exc_info=True)
+
         await bash_executor.close()
         output_manager.stop()
 
-        # Disconnect VTuber
         if vtuber_provider is not None:
             try:
                 await vtuber_provider.disconnect()
             except Exception:
                 logger.debug("Error disconnecting VTuber", exc_info=True)
 
-        # Shut down computer executor
         if computer_executor is not None:
             computer_executor.shutdown()
-
-        await messaging_manager.stop()
 
         logger.info("%s shutting down.", name)
 
