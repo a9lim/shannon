@@ -7,7 +7,7 @@ AI VTuber powered by Claude. Async event bus architecture with direct Anthropic 
 ```bash
 pip install -e ".[dev]"           # Core + test deps
 pip install -e ".[all,dev]"       # All optional providers
-python3 -m pytest tests/ -v       # Run tests (335 tests, ~16s)
+python3 -m pytest tests/ -v       # Run tests (396 tests, ~29s)
 shannon                           # Run (needs API key in config.yaml or ANTHROPIC_API_KEY env var)
 shannon --speech                  # Speech I/O mode
 shannon --dangerously-skip-permissions  # Skip tool confirmation prompts
@@ -22,10 +22,10 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 ## Key Patterns
 
 - **Brain decomposed** into `brain.py` (orchestration), `claude.py` (API client), `tool_dispatch.py` (executor routing), `tool_registry.py` (tool list builder).
-- **Config** is nested dataclasses in `shannon/config.py`, loaded from `config.yaml` with `_merge_dataclass()` for partial overrides. Config values are validated via `__post_init__` (clamping, range checks) — automatically re-run after merge. Missing API key or missing Discord token (when enabled) raise `ValueError` at startup.
+- **Config** is nested dataclasses in `shannon/config.py`, loaded from `config.yaml` with `_merge_dataclass()` for partial overrides. `_merge_dataclass` performs type coercion (scalar→list, string→int/float) and warns on unknown keys. Config values are validated via `__post_init__` (clamping, range checks) — automatically re-run after merge. `_build_defaults()` uses a `_SKIP_VALIDATION` flag to construct defaults without triggering validation, which runs after YAML merge. Missing API key or missing Discord token (when enabled) raise `ValueError` at startup.
 - **Anthropic native tools** — server-side tools (`web_search`, `web_fetch`, `code_execution`, `memory`) are declared in the tools list and handled by the API. Client-side tools (`computer`, `bash`, `str_replace_based_edit_tool`) are executed locally by tool executors in `shannon/tools/` and `shannon/computer/`.
-- **No ActionManager** — tool calls from the LLM are dispatched directly by `ToolDispatcher`. Confirmation gates live in each executor (`require_confirmation` flag in config).
-- **Memory** uses the Anthropic-hosted `memory` tool (type `memory_20250818`) — the API manages recall automatically. The client-side `MemoryBackend` validates paths with URL-decode + `..` fast-reject + symlink-resolved containment check.
+- **No ActionManager** — tool calls from the LLM are dispatched directly by `ToolDispatcher`. Confirmation is handled via the event bus: `ToolDispatcher` publishes `ToolConfirmationRequest`, a handler (CLI stdin by default) prompts the user and publishes `ToolConfirmationResponse`. Controlled by `require_confirmation` flags in each tool's config (default `True`). `--dangerously-skip-permissions` sets all flags to `False`.
+- **Memory** uses the Anthropic-hosted `memory` tool (type `memory_20250818`) — the API manages recall automatically. The client-side `MemoryBackend` validates paths with URL-decode + `..` fast-reject + symlink-resolved containment check against `_memories_root` (not the broader `base_dir`).
 - Optional deps are lazy-imported with `try/except ImportError` — missing deps degrade gracefully with a warning.
 
 ## Anthropic API Features
@@ -35,7 +35,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 - **Prompt caching** — system prompt cached with `cache_control: ephemeral`
 - **Compaction** — conversation history compacted via `compact-2026-01-12` beta header when `llm.compaction: true`
 - **1M context** — `context-1m-2025-08-07` beta header always included
-- **Message normalization** — `ClaudeClient._normalize_messages()` merges consecutive same-role messages to ensure strict user/assistant alternation
+- **Message normalization** — `ClaudeClient._normalize_messages()` merges consecutive same-role messages to ensure strict user/assistant alternation (but never merges messages containing `tool_use` or `tool_result` blocks, to preserve pairing integrity)
 - **Tool rate limits** — `web_search` and `web_fetch` have `max_uses: 3` to prevent runaway API costs
 
 ## Tool Set
@@ -60,7 +60,7 @@ Conditional tools (`computer`, `bash`, `str_replace_based_edit_tool`) are enable
 
 `UserInput` / `ChatMessage` → **Brain** (assembles context + history → calls Claude) → `LLMResponse` → **OutputManager** (TTS or print) + `ExpressionChange` → **VTuber**
 
-Tool calls are dispatched inline during the LLM turn — no event bus round-trip.
+Tool calls are dispatched inline during the LLM turn. Confirmation requests go through the event bus (`ToolConfirmationRequest` → handler → `ToolConfirmationResponse`) but the tool result is returned inline to the LLM loop.
 
 Messaging: **DiscordProvider** → **MessagingManager** (debounce, should_respond check) → `ChatMessage` → **Brain** → `ChatResponse` (with reactions) → **MessagingManager** → **DiscordProvider** (split messages, apply reactions)
 
@@ -95,7 +95,7 @@ python3 -m pytest tests/ -v              # Full suite
 python3 -m pytest tests/test_brain.py    # Single module
 ```
 
-Tests use `pytest-asyncio` with `asyncio_mode = "auto"`. No real API calls — Brain tests mock `ClaudeClient`. Tool tests set `require_confirmation=False` to avoid stdin prompts. A `conftest.py` autouse fixture sets `ANTHROPIC_API_KEY` so config validation doesn't raise during tests.
+Tests use `pytest-asyncio` with `asyncio_mode = "auto"`. No real API calls — Brain tests mock `ClaudeClient`. Tool dispatch tests that need to bypass confirmation construct `ToolDispatcher` without `tools_config`/`bus` (confirmation disabled when either is `None`). A `conftest.py` autouse fixture sets `ANTHROPIC_API_KEY` so config validation doesn't raise during tests.
 
 ## Project Layout
 
