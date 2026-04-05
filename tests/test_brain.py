@@ -668,8 +668,12 @@ class FakeClaudePauseTurn:
 
 
 @pytest.mark.asyncio
-async def test_brain_pause_turn_preserves_tool_calls():
-    """pause_turn must include tool_use blocks in the assistant message for API continuity."""
+async def test_brain_pause_turn_server_side_tool_not_in_messages():
+    """pause_turn with server-side tools must NOT include their tool_use blocks.
+
+    Server-side tool_use IDs without matching tool_result blocks cause
+    an API 400 error.  The brain should omit them from reconstructed messages.
+    """
     fake_claude = FakeClaudePauseTurn()
     bus, brain = _make_brain(fake_claude=fake_claude)
 
@@ -686,14 +690,14 @@ async def test_brain_pause_turn_preserves_tool_calls():
     # generate should have been called twice: once pause_turn, once end_turn
     assert fake_claude.call_count == 2
 
-    # The second call's messages must include an assistant message with tool_calls
+    # The second call's messages must have an assistant message WITHOUT the
+    # server-side tool call (web_search), since we can't provide a tool_result
+    # for it — the API handles it internally.
     second_call_messages = fake_claude.messages_per_call[1]
     assistant_msgs = [m for m in second_call_messages if m.role == "assistant"]
     assert len(assistant_msgs) >= 1
-    # The assistant message added after pause_turn should carry the tool call
     pause_assistant = assistant_msgs[-1]
-    assert len(pause_assistant.tool_calls) == 1
-    assert pause_assistant.tool_calls[0]["name"] == "web_search"
+    assert len(pause_assistant.tool_calls) == 0
 
     # Brain should have produced output (from both turns)
     assert any(r.text for r in llm_responses)
@@ -736,6 +740,47 @@ async def test_brain_max_session_messages_zero_means_no_history():
     assert second_call_messages[0].role == "system"
     assert second_call_messages[1].role == "user"
     assert second_call_messages[1].content == "Second message"
+
+
+class FakeClaudeToolOnly:
+    """Returns only tool calls (no text) on the first call, then text on the second."""
+    def __init__(self):
+        self.call_count = 0
+        self.messages_per_call = []
+
+    async def generate(self, messages, tools=None, betas=None):
+        self.call_count += 1
+        self.messages_per_call.append(list(messages))
+        if self.call_count == 1:
+            return LLMResponse(
+                text="",
+                tool_calls=[LLMToolCall(id="tc1", name="bash", arguments={"command": "ls"})],
+                stop_reason="end_turn",
+            )
+        return LLMResponse(text="done", tool_calls=[], stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_brain_tool_only_response_no_empty_history():
+    """When LLM responds with only tool calls and no text, history must not contain an empty assistant message."""
+    fake_claude = FakeClaudeToolOnly()
+    bus, brain = _make_brain(fake_claude=fake_claude)
+    await brain.start()
+    await bus.publish(UserInput(text="run ls", source="text"))
+    for msg in brain._history:
+        if msg.role == "assistant":
+            assert msg.content != "", "Empty assistant message found in history"
+
+
+@pytest.mark.asyncio
+async def test_brain_history_cleared_when_max_zero():
+    """When max_session_messages=0, history should not accumulate."""
+    bus, brain = _make_brain()
+    brain._config.memory.max_session_messages = 0
+    await brain.start()
+    await bus.publish(UserInput(text="Hello", source="text"))
+    await bus.publish(UserInput(text="World", source="text"))
+    assert len(brain._history) == 0
 
 
 @pytest.mark.asyncio

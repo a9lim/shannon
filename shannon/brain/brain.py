@@ -185,7 +185,8 @@ class Brain:
         Returns a list of response texts. Multiple entries when the LLM uses
         the ``continue`` tool to send follow-up messages.
         """
-        assert self._prompt_builder is not None, "Brain.start() must be called before processing input"
+        if self._prompt_builder is None:
+            raise RuntimeError("Brain.start() must be called before processing input")
 
         async with self._lock:
             # Gather vision images for this turn
@@ -302,14 +303,21 @@ class Brain:
 
                 # Server-side tool loop paused — re-send to continue
                 if llm_response.stop_reason == "pause_turn":
-                    if llm_response.tool_calls:
+                    # Only include client-side tool_use blocks — server-side
+                    # ones are handled by the API and must not appear without
+                    # a matching tool_result.
+                    client_calls = [
+                        tc for tc in llm_response.tool_calls
+                        if not self._dispatcher.is_server_side(tc.name)
+                    ]
+                    if client_calls:
                         messages.append(
                             LLMMessage(
                                 role="assistant",
                                 content=llm_response.text,
                                 tool_calls=[
                                     {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                                    for tc in llm_response.tool_calls
+                                    for tc in client_calls
                                 ],
                             )
                         )
@@ -328,14 +336,21 @@ class Brain:
                     messages.append(LLMMessage(role="assistant", content=llm_response.text))
                     break
 
-                # Feed tool results back to LLM for the next iteration
+                # Feed tool results back to LLM for the next iteration.
+                # Only include client-side tool_use blocks — server-side
+                # ones are handled by the API and must not appear without
+                # a matching tool_result.
+                client_calls = [
+                    tc for tc in llm_response.tool_calls
+                    if not self._dispatcher.is_server_side(tc.name)
+                ]
                 messages.append(
                     LLMMessage(
                         role="assistant",
                         content=llm_response.text,
                         tool_calls=[
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                            for tc in llm_response.tool_calls
+                            for tc in client_calls
                         ],
                     )
                 )
@@ -367,17 +382,20 @@ class Brain:
 
             # ---- Persist to history ----
             # Store text-only copies in history (images are one-time context)
-            self._history.append(LLMMessage(
-                role="user",
-                content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content),
-            ))
             combined_text = "\n\n".join(all_responses)
-            self._history.append(LLMMessage(
-                role="assistant",
-                content=combined_text,
-            ))
-            # Trim history to max_session_messages
+            if combined_text:
+                self._history.append(LLMMessage(
+                    role="user",
+                    content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content),
+                ))
+                self._history.append(LLMMessage(
+                    role="assistant",
+                    content=combined_text,
+                ))
+            # Trim history or clear for stateless mode
             if max_history > 0 and len(self._history) > max_history:
                 self._history = self._history[-max_history:]
+            elif max_history == 0:
+                self._history.clear()
 
             return all_responses
