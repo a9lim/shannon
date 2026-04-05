@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -175,8 +176,6 @@ class Brain:
 
     async def _on_voice_input(self, event: VoiceInput) -> None:
         """Handle transcribed voice channel speech."""
-        import random
-
         logger.debug("Received VoiceInput from %s: %r", event.channel, event.text)
 
         prob = self._config.messaging.voice.voice_reply_probability

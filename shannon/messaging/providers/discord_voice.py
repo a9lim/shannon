@@ -7,9 +7,13 @@ import audioop
 import io
 import logging
 import struct
+import threading
 import time
 import wave
 from typing import TYPE_CHECKING, Any
+
+import nacl.secret
+import nacl.utils
 
 if TYPE_CHECKING:
     from shannon.bus import EventBus
@@ -209,6 +213,7 @@ class VoiceManager:
         self._silence_task: asyncio.Task | None = None
         self._muted = False
         self._opus_decoder = None
+        self._lock = threading.Lock()  # Protects _user_buffers and _opus_decoder from socket thread
 
     async def start(self) -> None:
         from shannon.events import VoiceOutput
@@ -337,7 +342,11 @@ class VoiceManager:
             logger.debug("Failed to remove socket listener", exc_info=True)
 
     def _on_udp_packet(self, data: bytes) -> None:
-        """Callback for raw UDP packets from Discord voice socket."""
+        """Callback for raw UDP packets from Discord voice socket.
+
+        Called from discord.py's SocketReader thread — not the asyncio event loop.
+        Uses self._lock to synchronize access to _user_buffers and _opus_decoder.
+        """
         if self._muted and self._config.mute_during_playback:
             return
 
@@ -358,42 +367,82 @@ class VoiceManager:
         if pcm is None:
             return
 
-        if ssrc not in self._user_buffers:
-            self._user_buffers[ssrc] = UserAudioBuffer(
-                max_seconds=self._config.buffer_max_seconds,
-                sample_rate=48000,
-                channels=2,
-            )
-        self._user_buffers[ssrc].append(pcm)
+        with self._lock:
+            if ssrc not in self._user_buffers:
+                self._user_buffers[ssrc] = UserAudioBuffer(
+                    max_seconds=self._config.buffer_max_seconds,
+                    sample_rate=48000,
+                    channels=2,
+                )
+            self._user_buffers[ssrc].append(pcm)
 
     def _decrypt_payload(self, payload: bytes, header: bytes) -> bytes | None:
-        """Decrypt an RTP payload using the session secret key."""
+        """Decrypt an RTP payload using the session secret key.
+
+        Supports both XSalsa20-Poly1305 (legacy) and AEAD-AES256-GCM (modern)
+        encryption modes, selected by the voice connection's negotiated mode.
+        """
         for vc in self._voice_clients.values():
             try:
                 secret_key = bytes(vc._connection.secret_key)
                 if not secret_key:
                     continue
-                nonce = header + b"\x00" * (24 - len(header))
-                import nacl.secret
-                box = nacl.secret.SecretBox(secret_key)
-                return box.decrypt(payload, nonce)
+                mode = getattr(vc._connection, "mode", "xsalsa20_poly1305")
+                if "aead_aes256_gcm" in mode:
+                    return self._decrypt_aead_gcm(payload, header, secret_key)
+                else:
+                    # XSalsa20-Poly1305 (legacy modes)
+                    nonce = header + b"\x00" * (24 - len(header))
+                    box = nacl.secret.SecretBox(secret_key)
+                    return box.decrypt(payload, nonce)
             except Exception:
                 logger.debug("Decryption failed for packet", exc_info=True)
-                return None
+                continue  # Try next voice client
         return None
 
-    def _decode_opus(self, opus_data: bytes) -> bytes | None:
-        """Decode an opus frame to 48kHz stereo PCM."""
+    @staticmethod
+    def _decrypt_aead_gcm(payload: bytes, header: bytes, secret_key: bytes) -> bytes | None:
+        """Decrypt a payload using AEAD-AES256-GCM (Discord's modern encryption)."""
         try:
-            if self._opus_decoder is None:
-                import discord.opus
-                if not discord.opus.is_loaded():
-                    discord.opus._load_default()
-                self._opus_decoder = discord.opus.Decoder()
-            return self._opus_decoder.decode(opus_data)
-        except Exception:
-            logger.debug("Opus decode failed", exc_info=True)
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        except ImportError:
+            logger.warning(
+                "AEAD-AES256-GCM encryption requires the 'cryptography' package. "
+                "Install with: pip install cryptography"
+            )
             return None
+        # Discord AES-GCM: last 4 bytes of payload are the nonce (big-endian uint32),
+        # the rest is ciphertext + GCM tag. AAD is the RTP header.
+        if len(payload) < 4:
+            return None
+        nonce_suffix = payload[-4:]
+        ciphertext = payload[:-4]
+        # Build 12-byte nonce: 8 zero bytes + 4-byte suffix
+        nonce = b"\x00" * 8 + nonce_suffix
+        try:
+            aesgcm = AESGCM(secret_key)
+            return aesgcm.decrypt(nonce, ciphertext, header)
+        except Exception:
+            logger.debug("AES-GCM decryption failed", exc_info=True)
+            return None
+
+    def _decode_opus(self, opus_data: bytes) -> bytes | None:
+        """Decode an opus frame to 48kHz stereo PCM.
+
+        Protected by self._lock since discord.opus.Decoder wraps ctypes
+        calls to libopus which are not thread-safe.
+        """
+        with self._lock:
+            try:
+                if self._opus_decoder is None:
+                    import discord.opus
+                    if not discord.opus.is_loaded():
+                        discord.opus._load_default()
+                    self._opus_decoder = discord.opus.Decoder()
+                return self._opus_decoder.decode(opus_data)
+            except Exception:
+                logger.debug("Opus decode failed", exc_info=True)
+                return None
 
     async def _silence_monitor(self) -> None:
         """Background task: poll buffers for silence gaps."""
@@ -411,28 +460,33 @@ class VoiceManager:
         if not self._user_buffers:
             return
 
-        active_buffers: list[tuple[int, UserAudioBuffer]] = [
-            (ssrc, buf) for ssrc, buf in self._user_buffers.items() if buf.has_data
-        ]
-        if not active_buffers:
-            return
+        # Snapshot active buffers under lock (socket thread may be appending)
+        with self._lock:
+            active_buffers: list[tuple[int, UserAudioBuffer]] = [
+                (ssrc, buf) for ssrc, buf in self._user_buffers.items() if buf.has_data
+            ]
+            if not active_buffers:
+                return
 
-        for _ssrc, buf in active_buffers:
-            if buf.silence_seconds < self._config.silence_threshold:
-                return  # Someone is still speaking
+            for _ssrc, buf in active_buffers:
+                if buf.silence_seconds < self._config.silence_threshold:
+                    return  # Someone is still speaking
 
-        # All speakers are silent — transcribe each buffer
+            # All speakers are silent — drain buffers under lock
+            drained: list[tuple[int, bytes]] = []
+            for ssrc, buf in active_buffers:
+                drained.append((ssrc, buf.drain()))
+
+        # Transcribe outside the lock (STT is async and slow)
         speakers: dict[str, str] = {}
         text_parts: list[str] = []
 
-        for ssrc, buf in active_buffers:
+        for ssrc, pcm_48k_stereo in drained:
             user_info = self._ssrc_to_user.get(ssrc)
             if user_info is None:
-                buf.drain()
                 continue
 
             user_id, display_name = user_info
-            pcm_48k_stereo = buf.drain()
             pcm_16k_mono = pcm_48k_stereo_to_16k_mono(pcm_48k_stereo)
             wav_data = _pcm_to_wav(pcm_16k_mono, sample_rate=16000, channels=1)
 
@@ -478,7 +532,7 @@ class VoiceManager:
 
         # Wait for any current playback to finish (sequential queuing)
         while target_vc.is_playing():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
 
         source = ChunkAudioSource(event.audio, volume=self._config.volume)
 
