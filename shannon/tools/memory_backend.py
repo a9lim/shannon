@@ -52,7 +52,7 @@ class MemoryBackend:
 
         # Must stay within memories root (which is within base_dir)
         try:
-            candidate.relative_to(self._base)
+            candidate.relative_to(self._memories_root)
         except ValueError:
             return None
 

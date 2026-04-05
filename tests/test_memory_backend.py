@@ -167,3 +167,17 @@ def test_path_traversal_mixed_encoding_blocked(backend):
     """Mixed encoded/literal '..' should be rejected."""
     result = backend.execute({"command": "view", "path": "/memories/..%2f..%2fetc/passwd"})
     assert "does not exist" in result or "traversal" in result.lower()
+
+
+def test_resolve_rejects_symlink_escaping_memories_root(tmp_path):
+    """A symlink inside memories/ pointing outside memories/ (but inside base_dir) must be rejected."""
+    memories_dir = tmp_path / "memories"
+    memories_dir.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret data")
+    link = memories_dir / "escape"
+    link.symlink_to(secret)
+
+    backend = MemoryBackend(base_dir=str(tmp_path))
+    result = backend.execute({"command": "view", "path": "/memories/escape"})
+    assert "does not exist" in result or "invalid" in result.lower()
