@@ -94,11 +94,13 @@ When the tool loop exhausts its maximum iterations without completing, the brain
 
 Shannon can join Discord voice channels for full-duplex audio communication. Requires `--speech` flag and `messaging.voice.enabled: true`.
 
-**How it works:** VoiceManager auto-joins configured voice channels when users enter, captures per-user audio via raw UDP socket listener (RTP parse, decrypt, opus decode, PCM buffer), batches on silence gaps, transcribes via Whisper STT, and sends the combined input to the brain. Responses are synthesized via Piper TTS and played back through the VoiceClient.
+**How it works:** VoiceManager auto-joins configured voice channels when users enter, captures per-user audio via raw UDP socket listener (RTP parse → transport decrypt → DAVE E2EE decrypt → opus decode → PCM buffer), batches on silence gaps, transcribes via Whisper STT, and sends the combined input to the brain. Responses are synthesized via Piper TTS and played back through the VoiceClient.
+
+**Decryption chain:** Transport layer (XSalsa20-Poly1305 legacy or AEAD-AES256-GCM modern, auto-detected from negotiated mode) → DAVE E2EE layer (via `davey.DaveSession.decrypt`, transparent passthrough when DAVE is not active). Thread-safe: socket reader thread accesses shared buffers and opus decoder under a `threading.Lock`.
 
 **Config fields:** `messaging.voice.enabled` (default false), `messaging.voice.auto_join_channels` (list of channel IDs, empty = any), `messaging.voice.silence_threshold` (0.5-10.0, default 2.0), `messaging.voice.buffer_max_seconds` (5.0-60.0, default 30.0), `messaging.voice.voice_reply_probability` (0-1, default 1.0), `messaging.voice.mute_during_playback` (default true), `messaging.voice.volume` (0-2, default 1.0).
 
-**Dependencies:** `PyNaCl`, `davey`, system `libopus`. Install with `pip install 'shannon[voice]'`.
+**Dependencies:** `PyNaCl`, `davey`, system `libopus`. Install with `pip install 'shannon[voice]'`. AES-GCM mode also requires `cryptography` (usually already installed).
 
 ## Testing
 
