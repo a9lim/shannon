@@ -144,3 +144,60 @@ def test_user_audio_buffer_silence_detection():
     # Simulate time passing by backdating last_activity
     buf._last_activity = time.monotonic() - 3.0
     assert buf.silence_seconds >= 2.9
+
+
+# ---------------------------------------------------------------------------
+# ChunkAudioSource tests
+# ---------------------------------------------------------------------------
+
+def test_chunk_audio_source_reads_frames():
+    """ChunkAudioSource should yield 3840-byte frames from resampled PCM."""
+    from shannon.messaging.providers.discord_voice import ChunkAudioSource
+    from shannon.output.providers.tts.base import AudioChunk
+
+    # 100ms of 22050Hz mono silence
+    num_samples = int(22050 * 0.1)
+    chunk = AudioChunk(data=b"\x00" * (num_samples * 2), sample_rate=22050, channels=1)
+    source = ChunkAudioSource(chunk)
+
+    frames = []
+    while True:
+        frame = source.read()
+        if not frame:
+            break
+        frames.append(frame)
+
+    assert len(frames) > 0
+    for frame in frames:
+        assert len(frame) == 3840  # 20ms of 48kHz stereo 16-bit
+
+
+def test_chunk_audio_source_is_not_opus():
+    """ChunkAudioSource returns raw PCM, not opus."""
+    from shannon.messaging.providers.discord_voice import ChunkAudioSource
+    from shannon.output.providers.tts.base import AudioChunk
+
+    chunk = AudioChunk(data=b"\x00" * 100, sample_rate=22050, channels=1)
+    source = ChunkAudioSource(chunk)
+    assert source.is_opus() is False
+
+
+def test_chunk_audio_source_applies_volume():
+    """Volume adjustment should scale PCM amplitude."""
+    from shannon.messaging.providers.discord_voice import ChunkAudioSource
+    from shannon.output.providers.tts.base import AudioChunk
+
+    # Single 48kHz stereo frame of known values
+    # 960 samples * 2 channels * 2 bytes = 3840 bytes
+    sample_val = 10000
+    samples = [sample_val, sample_val] * 960  # stereo pairs
+    data = struct.pack(f"<{len(samples)}h", *samples)
+
+    chunk = AudioChunk(data=data, sample_rate=48000, channels=2)
+    source = ChunkAudioSource(chunk, volume=0.5)
+
+    frame = source.read()
+    # Unpack first sample pair
+    left, right = struct.unpack_from("<hh", frame, 0)
+    assert abs(left - 5000) < 100  # ~50% of 10000
+    assert abs(right - 5000) < 100

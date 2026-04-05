@@ -104,3 +104,59 @@ class UserAudioBuffer:
         data = bytes(self._buf)
         self._buf.clear()
         return data
+
+
+# ---------------------------------------------------------------------------
+# Discord AudioSource for TTS playback
+# ---------------------------------------------------------------------------
+
+FRAME_SIZE = 3840  # 20ms of 48kHz stereo 16-bit PCM
+
+
+class ChunkAudioSource:
+    """discord.AudioSource that plays an AudioChunk, resampled to 48kHz stereo.
+
+    discord.py calls read() in a separate thread to get 20ms PCM frames.
+    Returns empty bytes when done.
+    """
+
+    def __init__(self, chunk: object, volume: float = 1.0) -> None:
+        # chunk is AudioChunk but typed as object to avoid import at module level
+        data = chunk.data  # type: ignore[attr-defined]
+        sample_rate = chunk.sample_rate  # type: ignore[attr-defined]
+        channels = chunk.channels  # type: ignore[attr-defined]
+
+        # Convert to 48kHz stereo
+        if channels == 1:
+            pcm = pcm_mono_to_48k_stereo(data, src_rate=sample_rate)
+        elif sample_rate != 48000:
+            # Stereo but wrong rate — resample
+            pcm, _ = audioop.ratecv(data, 2, 2, sample_rate, 48000, None)
+        else:
+            pcm = data
+
+        # Apply volume
+        if volume != 1.0:
+            pcm = audioop.mul(pcm, 2, volume)
+
+        self._data = pcm
+        self._offset = 0
+
+    def read(self) -> bytes:
+        """Return next 20ms frame (3840 bytes) or empty bytes if done."""
+        end = self._offset + FRAME_SIZE
+        if self._offset >= len(self._data):
+            return b""
+        frame = self._data[self._offset:end]
+        self._offset = end
+        if len(frame) < FRAME_SIZE:
+            # Pad last frame with silence
+            frame = frame + b"\x00" * (FRAME_SIZE - len(frame))
+        return frame
+
+    def is_opus(self) -> bool:
+        return False
+
+    def cleanup(self) -> None:
+        self._data = b""
+        self._offset = 0
