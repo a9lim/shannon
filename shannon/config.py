@@ -14,12 +14,13 @@ _log = logging.getLogger(__name__)
 _SKIP_VALIDATION = False
 
 
-def _clamp(value: float, lo: float, hi: float, name: str, default: float) -> float:
-    """Clamp a value to [lo, hi], logging a warning and returning default if out of range."""
+def _clamp(value: float, lo: float, hi: float, name: str) -> float:
+    """Clamp a value to [lo, hi], logging a warning if out of range."""
     if lo <= value <= hi:
         return value
-    _log.warning("%s=%.4g out of range [%.4g, %.4g]; using %.4g.", name, value, lo, hi, default)
-    return default
+    clamped = max(lo, min(hi, value))
+    _log.warning("%s=%.4g out of range [%.4g, %.4g]; clamping to %.4g.", name, value, lo, hi, clamped)
+    return clamped
 
 
 @dataclass
@@ -94,10 +95,10 @@ class MessagingConfig:
     def __post_init__(self) -> None:
         if _SKIP_VALIDATION:
             return
-        self.debounce_delay = _clamp(self.debounce_delay, 0, 60, "debounce_delay", 3.0)
-        self.reply_probability = _clamp(self.reply_probability, 0, 1, "reply_probability", 0.0)
-        self.reaction_probability = _clamp(self.reaction_probability, 0, 1, "reaction_probability", 0.0)
-        self.conversation_expiry = _clamp(self.conversation_expiry, 0, 3600, "conversation_expiry", 300.0)
+        self.debounce_delay = _clamp(self.debounce_delay, 0, 60, "debounce_delay")
+        self.reply_probability = _clamp(self.reply_probability, 0, 1, "reply_probability")
+        self.reaction_probability = _clamp(self.reaction_probability, 0, 1, "reaction_probability")
+        self.conversation_expiry = _clamp(self.conversation_expiry, 0, 3600, "conversation_expiry")
         self.max_context_messages = max(0, self.max_context_messages)
         if self.enabled and not self.token:
             raise ValueError(

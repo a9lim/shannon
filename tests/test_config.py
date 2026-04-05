@@ -317,8 +317,8 @@ class TestLoadConfig:
             yaml.dump(data, f)
             tmp_path = f.name
         cfg = load_config(tmp_path)
-        assert cfg.messaging.debounce_delay == 3.0
-        assert cfg.messaging.reply_probability == 0.0
+        assert cfg.messaging.debounce_delay == 60.0
+        assert cfg.messaging.reply_probability == 1.0
 
 
 class TestConfigFailHard:
@@ -381,11 +381,11 @@ class TestMessagingConfigDefaults:
 class TestConfigValidation:
     def test_messaging_debounce_delay_clamped_high(self):
         cfg = MessagingConfig(debounce_delay=100.0)
-        assert cfg.debounce_delay == 3.0
+        assert cfg.debounce_delay == 60.0
 
     def test_messaging_debounce_delay_clamped_low(self):
         cfg = MessagingConfig(debounce_delay=-1.0)
-        assert cfg.debounce_delay == 3.0
+        assert cfg.debounce_delay == 0.0
 
     def test_messaging_debounce_delay_valid_unchanged(self):
         cfg = MessagingConfig(debounce_delay=5.0)
@@ -393,7 +393,7 @@ class TestConfigValidation:
 
     def test_messaging_reply_probability_clamped_high(self):
         cfg = MessagingConfig(reply_probability=2.0)
-        assert cfg.reply_probability == 0.0
+        assert cfg.reply_probability == 1.0
 
     def test_messaging_reply_probability_valid_unchanged(self):
         cfg = MessagingConfig(reply_probability=0.5)
@@ -401,11 +401,11 @@ class TestConfigValidation:
 
     def test_messaging_reaction_probability_clamped_high(self):
         cfg = MessagingConfig(reaction_probability=1.5)
-        assert cfg.reaction_probability == 0.0
+        assert cfg.reaction_probability == 1.0
 
     def test_messaging_conversation_expiry_clamped_high(self):
         cfg = MessagingConfig(conversation_expiry=5000.0)
-        assert cfg.conversation_expiry == 300.0
+        assert cfg.conversation_expiry == 3600.0
 
     def test_messaging_max_context_messages_clamped_negative(self):
         cfg = MessagingConfig(max_context_messages=-1)
@@ -495,3 +495,11 @@ class TestBuildDefaults:
         cfg = _build_defaults()
         for field_name in MessagingConfig.__dataclass_fields__:
             assert hasattr(cfg.messaging, field_name), f"Missing field: messaging.{field_name}"
+
+
+def test_clamp_returns_boundary_not_default():
+    """_clamp should return the nearest boundary, not a hardcoded default."""
+    from shannon.config import _clamp
+    assert _clamp(-1.0, 0, 60, "test") == 0.0
+    assert _clamp(100.0, 0, 60, "test") == 60.0
+    assert _clamp(5.0, 0, 60, "test") == 5.0
