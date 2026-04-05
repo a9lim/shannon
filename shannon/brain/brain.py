@@ -20,12 +20,15 @@ from shannon.events import (
     LLMResponse as LLMResponseEvent,
     UserInput,
     VisionFrame,
+    VoiceInput,
+    VoiceOutput,
 )
 
 if TYPE_CHECKING:
     from shannon.brain.claude import ClaudeClient
     from shannon.brain.tool_dispatch import ToolDispatcher
     from shannon.brain.tool_registry import ToolRegistry
+    from shannon.output.providers.tts.base import TTSProvider
 
 MAX_CONTINUE_DEFAULT = 5
 
@@ -53,12 +56,14 @@ class Brain:
         dispatcher: ToolDispatcher,
         registry: ToolRegistry,
         config: ShannonConfig,
+        tts: "TTSProvider | None" = None,
     ) -> None:
         self._bus = bus
         self._claude = claude
         self._dispatcher = dispatcher
         self._registry = registry
         self._config = config
+        self._tts = tts
         self._history: list[LLMMessage] = []
         self._vision_buffer: list[VisionFrame] = []
         self._prompt_builder: PromptBuilder | None = None
@@ -74,6 +79,7 @@ class Brain:
 
         self._bus.subscribe(UserInput, self._on_user_input)
         self._bus.subscribe(ChatMessage, self._on_chat_message)
+        self._bus.subscribe(VoiceInput, self._on_voice_input)
         self._bus.subscribe(AutonomousTrigger, self._on_autonomous_trigger)
         self._bus.subscribe(VisionFrame, self._on_vision_frame)
 
@@ -166,6 +172,44 @@ class Brain:
                     reactions=["⚠️"],
                 )
             )
+
+    async def _on_voice_input(self, event: VoiceInput) -> None:
+        """Handle transcribed voice channel speech."""
+        import random
+
+        logger.debug("Received VoiceInput from %s: %r", event.channel, event.text)
+
+        prob = self._config.messaging.voice.voice_reply_probability
+        if prob < 1.0 and random.random() > prob:
+            logger.debug("Skipping voice input (probability check)")
+            return
+
+        suffix_parts: list[str] = []
+        if event.speakers:
+            names = list(event.speakers.values())
+            suffix_parts.append(f"Voice channel participants: {', '.join(names)}")
+        dynamic_context = "\n".join(suffix_parts)
+
+        request = GenerationRequest(
+            text=event.text,
+            dynamic_context=dynamic_context,
+            tool_mode="chat",
+            channel_id=event.channel,
+            participants=event.speakers,
+        )
+        responses = await self._process_input(request)
+
+        # Synthesize TTS audio for voice channel playback
+        if self._tts is not None and responses and any(r.strip() for r in responses):
+            full_text = "\n".join(r for r in responses if r.strip())
+            try:
+                chunk = await self._tts.synthesize(full_text)
+                await self._bus.publish(VoiceOutput(
+                    audio=chunk,
+                    channel=event.channel,
+                ))
+            except Exception:
+                logger.exception("Failed to synthesize voice response")
 
     async def _on_autonomous_trigger(self, event: AutonomousTrigger) -> None:
         await self._process_input(GenerationRequest(

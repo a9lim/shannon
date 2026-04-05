@@ -117,6 +117,8 @@ from shannon.events import (
     LLMResponse as LLMResponseEvent,
     ChatResponse,
     ExpressionChange,
+    VoiceInput,
+    VoiceOutput,
 )
 from shannon.brain.brain import Brain
 from shannon.brain.prompt import PromptBuilder
@@ -740,6 +742,44 @@ async def test_brain_max_session_messages_zero_means_no_history():
     assert second_call_messages[0].role == "system"
     assert second_call_messages[1].role == "user"
     assert second_call_messages[1].content == "Second message"
+
+
+@pytest.mark.asyncio
+async def test_brain_handles_voice_input():
+    """VoiceInput should produce an LLMResponseEvent."""
+    bus, brain = _make_brain()
+
+    llm_responses: list[LLMResponseEvent] = []
+    bus.subscribe(LLMResponseEvent, lambda e: llm_responses.append(e))
+    await brain.start()
+
+    await bus.publish(VoiceInput(
+        text="Alice: Hello Shannon!",
+        speakers={"123": "Alice"},
+        channel="vc_1",
+    ))
+
+    assert len(llm_responses) == 1
+    assert llm_responses[0].text == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_brain_voice_input_skipped_by_probability():
+    """VoiceInput with reply_probability=0 should be silently dropped."""
+    bus, brain = _make_brain()
+    brain._config.messaging.voice.voice_reply_probability = 0.0
+
+    llm_responses: list[LLMResponseEvent] = []
+    bus.subscribe(LLMResponseEvent, lambda e: llm_responses.append(e))
+    await brain.start()
+
+    await bus.publish(VoiceInput(
+        text="Alice: Hello!",
+        speakers={"123": "Alice"},
+        channel="vc_1",
+    ))
+
+    assert len(llm_responses) == 0
 
 
 class FakeClaudeToolOnly:
