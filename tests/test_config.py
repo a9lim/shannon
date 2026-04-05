@@ -459,3 +459,21 @@ class TestConfigValidation:
     def test_autonomy_idle_timeout_minimum(self):
         cfg = AutonomyConfig(idle_timeout_seconds=0)
         assert cfg.idle_timeout_seconds >= 1
+
+
+class TestBuildDefaults:
+    def test_build_defaults_has_all_llm_fields(self):
+        """_build_defaults must produce an LLMConfig with every declared field."""
+        from shannon.config import _build_defaults
+        cfg = _build_defaults()
+        from shannon.config import LLMConfig
+        for field_name in LLMConfig.__dataclass_fields__:
+            assert hasattr(cfg.llm, field_name), f"Missing field: llm.{field_name}"
+        assert cfg.llm.enable_1m_context is True
+
+    def test_build_defaults_has_all_messaging_fields(self):
+        """_build_defaults must produce a MessagingConfig with every declared field."""
+        from shannon.config import _build_defaults, MessagingConfig
+        cfg = _build_defaults()
+        for field_name in MessagingConfig.__dataclass_fields__:
+            assert hasattr(cfg.messaging, field_name), f"Missing field: messaging.{field_name}"

@@ -11,6 +11,8 @@ import yaml
 
 _log = logging.getLogger(__name__)
 
+_SKIP_VALIDATION = False
+
 
 def _clamp(value: float, lo: float, hi: float, name: str, default: float) -> float:
     """Clamp a value to [lo, hi], logging a warning and returning default if out of range."""
@@ -30,6 +32,8 @@ class LLMConfig:
     api_key: str = ""
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         self.max_tokens = max(1, self.max_tokens)
         if not self.api_key and not os.environ.get("ANTHROPIC_API_KEY"):
             raise ValueError(
@@ -60,6 +64,8 @@ class VisionConfig:
     max_height: int = 768
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         if self.interval_seconds < 1.0:
             _log.warning("vision.interval_seconds=%.4g too low; using 1.0", self.interval_seconds)
             self.interval_seconds = 1.0
@@ -86,6 +92,8 @@ class MessagingConfig:
     admin_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         self.debounce_delay = _clamp(self.debounce_delay, 0, 60, "debounce_delay", 3.0)
         self.reply_probability = _clamp(self.reply_probability, 0, 1, "reply_probability", 0.0)
         self.reaction_probability = _clamp(self.reaction_probability, 0, 1, "reaction_probability", 0.0)
@@ -114,6 +122,8 @@ class BashConfig:
     timeout_seconds: int = 30
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         self.timeout_seconds = max(1, self.timeout_seconds)
 
 
@@ -138,6 +148,8 @@ class AutonomyConfig:
     idle_timeout_seconds: int = 600
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         self.cooldown_seconds = max(0, self.cooldown_seconds)
         self.idle_timeout_seconds = max(1, self.idle_timeout_seconds)
 
@@ -157,6 +169,8 @@ class MemoryConfig:
     max_continues: int = 5
 
     def __post_init__(self) -> None:
+        if _SKIP_VALIDATION:
+            return
         self.conversation_window = max(0, self.conversation_window)
         self.max_session_messages = max(0, self.max_session_messages)
         self.max_continues = max(0, self.max_continues)
@@ -199,34 +213,12 @@ def _merge_dataclass(instance: Any, overrides: dict) -> None:
 
 def _build_defaults() -> ShannonConfig:
     """Build ShannonConfig with defaults, skipping __post_init__ validation."""
-    llm = LLMConfig.__new__(LLMConfig)
-    llm.model = "claude-sonnet-4-5-20250514"
-    llm.max_tokens = 8192
-    llm.thinking = True
-
-    llm.compaction = True
-    llm.api_key = ""
-
-    config = ShannonConfig.__new__(ShannonConfig)
-    config.llm = llm
-    config.tools = ToolsConfig()
-    config.tts = TTSConfig()
-    config.stt = STTConfig()
-    config.vision = VisionConfig()
-    config.vtuber = VTuberConfig()
-    config.messaging = MessagingConfig.__new__(MessagingConfig)
-    config.messaging.type = "discord"
-    config.messaging.enabled = False
-    config.messaging.token = ""
-    config.messaging.debounce_delay = 3.0
-    config.messaging.reply_probability = 0.0
-    config.messaging.reaction_probability = 0.0
-    config.messaging.conversation_expiry = 300.0
-    config.messaging.max_context_messages = 20
-    config.messaging.admin_ids = []
-    config.autonomy = AutonomyConfig()
-    config.personality = PersonalityConfig()
-    config.memory = MemoryConfig()
+    global _SKIP_VALIDATION
+    _SKIP_VALIDATION = True
+    try:
+        config = ShannonConfig()
+    finally:
+        _SKIP_VALIDATION = False
     return config
 
 
