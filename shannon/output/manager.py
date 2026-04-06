@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 from shannon.events import ExpressionChange, LLMResponse, SpeechEnd, SpeechStart
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
     from shannon.bus import EventBus
     from shannon.output.providers.tts.base import TTSProvider
     from shannon.output.providers.vtuber.base import VTuberProvider
+
+logger = logging.getLogger(__name__)
 
 
 class OutputManager:
@@ -69,8 +72,11 @@ class OutputManager:
     # ------------------------------------------------------------------
 
     async def _speak(self, text: str) -> None:
-        """Synthesize *text* via TTS and emit SpeechStart/SpeechEnd events."""
+        """Synthesize *text* via TTS, play through speakers, and emit events."""
         assert self._tts is not None
+
+        # Always print the text so the CLI shows what was said
+        print(text)
 
         # Collect phonemes for lip-sync (best-effort)
         try:
@@ -89,14 +95,37 @@ class OutputManager:
         if self._vtuber is not None:
             await self._vtuber.start_speaking(phonemes=phonemes)
 
-        # Hold mouth open for the estimated audio duration
-        if duration > 0:
-            await asyncio.sleep(duration)
+        # Play audio through speakers
+        await self._play_audio(chunk)
 
         if self._vtuber is not None:
             await self._vtuber.stop_speaking()
 
         await self._bus.publish(SpeechEnd())
+
+    async def _play_audio(self, chunk: "AudioChunk") -> None:
+        """Play an AudioChunk through the default speaker using sounddevice."""
+        try:
+            import sounddevice as sd
+        except ImportError:
+            logger.warning(
+                "sounddevice not installed — cannot play audio. "
+                "Install with: pip install sounddevice"
+            )
+            return
+
+        import numpy as np
+
+        # Convert raw PCM bytes to numpy array (16-bit signed int)
+        audio = np.frombuffer(chunk.data, dtype=np.int16)
+        if chunk.channels > 1:
+            audio = audio.reshape(-1, chunk.channels)
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: sd.play(audio, samplerate=chunk.sample_rate, blocking=True),
+        )
 
 
 # ---------------------------------------------------------------------------

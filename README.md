@@ -113,9 +113,10 @@ All fields have sensible defaults. Only `llm.api_key` (or `ANTHROPIC_API_KEY` en
 llm:
   model: claude-opus-4-6
   max_tokens: 16000
-  thinking: true          # Adaptive extended thinking
-  compaction: true        # Server-side context compaction
-  api_key: ""             # Falls back to ANTHROPIC_API_KEY env var
+  thinking: true              # Adaptive extended thinking
+  compaction: true            # Server-side context compaction
+  enable_1m_context: true     # 1M token context window
+  api_key: ""                 # Falls back to ANTHROPIC_API_KEY env var
 
 tools:
   computer_use:
@@ -131,9 +132,10 @@ tools:
     require_confirmation: true
 
 tts:
-  type: piper
+  type: piper                 # "piper" or "coqui"
   model: en_US-lessac-medium
   rate: 1.0
+  speaker: ""                 # Multi-speaker model speaker ID (Coqui only)
 
 stt:
   type: whisper
@@ -144,6 +146,8 @@ vision:
   screen: true
   webcam: false
   interval_seconds: 60.0
+  max_width: 1024
+  max_height: 768
 
 vtuber:
   type: vtube_studio
@@ -161,6 +165,14 @@ messaging:
   conversation_expiry: 300.0    # 0-3600 seconds
   max_context_messages: 20
   admin_ids: []                 # Discord user ID strings
+  voice:
+    enabled: false
+    auto_join_channels: []      # Channel IDs, empty = any
+    silence_threshold: 2.0      # 0.5-10.0 seconds
+    buffer_max_seconds: 30.0    # 5.0-60.0 seconds
+    voice_reply_probability: 1.0  # 0-1
+    mute_during_playback: true
+    volume: 1.0                 # 0-2
 
 autonomy:
   enabled: true
@@ -175,6 +187,7 @@ personality:
 memory:
   dir: memory
   conversation_window: 50
+  max_session_messages: 40
   recall_top_k: 5
   max_continues: 5
 ```
@@ -184,7 +197,7 @@ memory:
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -v       # 335 tests, ~16s
+python3 -m pytest tests/ -v       # 478 tests, ~29s
 python3 -m pytest tests/test_brain.py  # Single module
 ```
 
@@ -209,7 +222,7 @@ shannon/
 ├── tools/                  # Client-side tool executors
 ├── computer/               # Computer-use executor (pyautogui)
 ├── input/                  # Text + Whisper STT
-├── output/                 # TTS (Piper) + VTuber (VTube Studio)
+├── output/                 # TTS (Piper/Coqui) + VTuber (VTube Studio)
 ├── vision/                 # Screen + webcam capture
 ├── autonomy/               # Idle timeout, screen change triggers
 └── messaging/              # Discord provider + manager

@@ -34,7 +34,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 - **Streaming** — `ClaudeClient` streams responses for low-latency output
 - **Prompt caching** — system prompt cached with `cache_control: ephemeral`
 - **Compaction** — conversation history compacted via `compact-2026-01-12` beta header when `llm.compaction: true`
-- **1M context** — `context-1m-2025-08-07` beta header always included
+- **1M context** — `context-1m-2025-08-07` beta header included when `llm.enable_1m_context: true` (default)
 - **Message normalization** — `ClaudeClient._normalize_messages()` merges consecutive same-role messages to ensure strict user/assistant alternation (but never merges messages containing `tool_use` or `tool_result` blocks, to preserve pairing integrity)
 - **Tool rate limits** — `web_search` and `web_fetch` have `max_uses: 3` to prevent runaway API costs
 

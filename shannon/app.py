@@ -170,7 +170,7 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         if tts_type == "piper":
             try:
                 from shannon.output.providers.tts.piper import PiperProvider
-                tts_provider = PiperProvider(model_path=config.tts.model)
+                tts_provider = PiperProvider(model_path=config.tts.model, speaker=config.tts.speaker)
             except ImportError:
                 logger.warning(
                     "piper-tts not installed; speech output unavailable. "
@@ -412,6 +412,11 @@ def main() -> None:
         level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # Suppress noisy third-party loggers at INFO level.
+    # httpx/httpcore: per-request "HTTP Request: POST … 200 OK" lines add no value.
+    # discord: gateway heartbeat/shard lifecycle noise.
+    for noisy in ("httpx", "httpcore", "discord", "discord.gateway", "discord.client"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     from shannon.config import load_config
     config = load_config(args.config)

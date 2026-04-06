@@ -1,8 +1,9 @@
 llm:
-  model: claude-opus-4-6
+  model: claude-sonnet-4-6
   max_tokens: 16000
   thinking: true
   compaction: true
+  enable_1m_context: true
   api_key: ""             # Or set ANTHROPIC_API_KEY env var
 
 tools:
@@ -28,6 +29,7 @@ tts:
   type: piper
   model: en_US-lessac-medium
   rate: 1.0
+  speaker: ""             # Multi-speaker model speaker ID (Coqui only)
 
 stt:
   type: whisper
@@ -38,6 +40,8 @@ vision:
   screen: true
   webcam: false
   interval_seconds: 60.0
+  max_width: 1024
+  max_height: 768
 
 vtuber:
   type: vtube_studio
@@ -55,6 +59,14 @@ messaging:
   conversation_expiry: 300.0
   max_context_messages: 20
   admin_ids: []
+  voice:
+    enabled: false
+    auto_join_channels: []
+    silence_threshold: 2.0
+    buffer_max_seconds: 30.0
+    voice_reply_probability: 1.0
+    mute_during_playback: true
+    volume: 1.0
 
 autonomy:
   enabled: true
@@ -71,5 +83,6 @@ personality:
 memory:
   dir: memory
   conversation_window: 50
+  max_session_messages: 40
   recall_top_k: 5
   max_continues: 5

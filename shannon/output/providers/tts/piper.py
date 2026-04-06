@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import io
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from shannon.output.providers.tts.base import AudioChunk, TTSProvider
@@ -10,14 +11,49 @@ from shannon.output.providers.tts.base import AudioChunk, TTSProvider
 if TYPE_CHECKING:
     pass
 
+_logger = logging.getLogger(__name__)
+
+# Standard directories where piper voices may be installed.
+_VOICE_SEARCH_DIRS = [
+    Path.home() / ".local" / "share" / "piper_voices",
+    Path.home() / ".local" / "share" / "piper-voices",
+    Path("/usr/share/piper-voices"),
+    Path("/usr/local/share/piper-voices"),
+]
+
+
+def _resolve_model_path(model_path: str) -> str:
+    """Resolve a bare model name to a full path if needed.
+
+    If *model_path* already points to an existing file, return it as-is.
+    Otherwise search standard voice directories for ``<name>.onnx``.
+    """
+    p = Path(model_path)
+    if p.exists():
+        return model_path
+    # Try appending .onnx
+    if p.with_suffix(".onnx").exists():
+        return str(p.with_suffix(".onnx"))
+    # Search standard directories
+    name = p.stem  # strip any extension the caller may have added
+    for d in _VOICE_SEARCH_DIRS:
+        candidate = d / f"{name}.onnx"
+        if candidate.exists():
+            _logger.debug("Resolved piper model %s → %s", model_path, candidate)
+            return str(candidate)
+    # Give up — return original and let piper raise a clear error
+    return model_path
+
 
 class PiperProvider(TTSProvider):
     """TTS provider backed by piper-tts (lazy-loaded)."""
 
-    def __init__(self, model_path: str, config_path: str | None = None) -> None:
-        self._model_path = model_path
+    def __init__(self, model_path: str, config_path: str | None = None, speaker: str = "") -> None:
+        self._model_path = _resolve_model_path(model_path)
         self._config_path = config_path
+        self._speaker = speaker
         self._voice: object | None = None  # piper.voice.PiperVoice, loaded lazily
+        self._syn_config: object | None = None  # piper.config.SynthesisConfig
         self._is_pinyin: bool = False  # set after load
 
     # ------------------------------------------------------------------
@@ -39,9 +75,31 @@ class PiperProvider(TTSProvider):
             model_path=self._model_path,
             config_path=self._config_path,
         )
-        from piper.config import PhonemeType  # type: ignore[import]
+        from piper.config import PhonemeType, SynthesisConfig  # type: ignore[import]
 
         self._is_pinyin = self._voice.config.phoneme_type == PhonemeType.PINYIN
+
+        # Resolve speaker name to ID for multi-speaker models
+        speaker_id = None
+        if self._speaker:
+            sid_map = getattr(self._voice.config, "speaker_id_map", None) or {}
+            # Try exact match, then case-insensitive
+            if self._speaker in sid_map:
+                speaker_id = sid_map[self._speaker]
+            else:
+                upper = self._speaker.upper()
+                for name, sid in sid_map.items():
+                    if name.upper() == upper:
+                        speaker_id = sid
+                        break
+            if speaker_id is not None:
+                _logger.info("Using piper speaker %s (id=%d)", self._speaker, speaker_id)
+            else:
+                _logger.warning(
+                    "Speaker %r not found in model; available: %s",
+                    self._speaker, ", ".join(sid_map.keys()),
+                )
+        self._syn_config = SynthesisConfig(speaker_id=speaker_id) if speaker_id is not None else None
 
     # ------------------------------------------------------------------
     # TTSProvider interface
@@ -62,22 +120,17 @@ class PiperProvider(TTSProvider):
         if self._is_pinyin:
             return self._synthesize_pinyin_english(text)
 
-        import wave
+        import numpy as np
 
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            self._voice.synthesize(text, wf)  # type: ignore[attr-defined]
+        sample_rate = self._voice.config.sample_rate  # type: ignore[attr-defined]
+        chunks = list(self._voice.synthesize(text, self._syn_config))  # type: ignore[attr-defined]
+        if not chunks:
+            return AudioChunk(data=b"", sample_rate=sample_rate, channels=1)
 
-        buf.seek(0)
-        data = buf.read()
-
-        # Read sample_rate from the wave header
-        buf.seek(0)
-        with wave.open(buf, "rb") as wf:
-            sample_rate = wf.getframerate()
-            channels = wf.getnchannels()
-
-        return AudioChunk(data=data, sample_rate=sample_rate, channels=channels)
+        audio = np.concatenate([c.audio_float_array for c in chunks])
+        audio = np.clip(audio, -1.0, 1.0)
+        pcm = (audio * 32767).astype(np.int16)
+        return AudioChunk(data=pcm.tobytes(), sample_rate=sample_rate, channels=1)
 
     def _synthesize_pinyin_english(self, text: str) -> AudioChunk:
         """Synthesize English text through a pinyin model.
@@ -107,7 +160,9 @@ class PiperProvider(TTSProvider):
             return AudioChunk(data=b"", sample_rate=sample_rate, channels=1)
 
         ids = pinyin_to_ids(flat, self._voice.config.phoneme_id_map)  # type: ignore[attr-defined]
-        audio = self._voice.phoneme_ids_to_audio(ids)  # type: ignore[attr-defined]
+        audio = self._voice.phoneme_ids_to_audio(ids, self._syn_config)  # type: ignore[attr-defined]
+        if isinstance(audio, tuple):
+            audio = audio[0]
 
         audio = np.clip(audio, -1.0, 1.0)
         pcm = (audio * 32767).astype(np.int16)
@@ -124,12 +179,8 @@ class PiperProvider(TTSProvider):
 
         loop = asyncio.get_running_loop()
 
-        try:
-            chunks = await loop.run_in_executor(None, self._stream_sync, text)
-            for chunk in chunks:
-                yield chunk
-        except AttributeError:
-            chunk = await self.synthesize(text)
+        chunks = await loop.run_in_executor(None, self._stream_sync, text)
+        for chunk in chunks:
             yield chunk
 
     def _stream_sync(self, text: str) -> list[AudioChunk]:
@@ -137,15 +188,16 @@ class PiperProvider(TTSProvider):
         if self._is_pinyin:
             return self._stream_pinyin_english(text)
 
+        import numpy as np
+
         result = []
-        for audio_bytes in self._voice.synthesize_stream_raw(text):  # type: ignore[attr-defined]
-            if isinstance(audio_bytes, (bytes, bytearray)):
-                raw = bytes(audio_bytes)
-            else:
-                raw = audio_bytes.tobytes()
+        sample_rate = self._voice.config.sample_rate  # type: ignore[attr-defined]
+        for chunk in self._voice.synthesize(text, self._syn_config):  # type: ignore[attr-defined]
+            audio = np.clip(chunk.audio_float_array, -1.0, 1.0)
+            pcm = (audio * 32767).astype(np.int16)
             result.append(AudioChunk(
-                data=raw,
-                sample_rate=self._voice.config.sample_rate,  # type: ignore[attr-defined]
+                data=pcm.tobytes(),
+                sample_rate=sample_rate,
                 channels=1,
             ))
         return result
@@ -174,7 +226,9 @@ class PiperProvider(TTSProvider):
 
         sample_rate = self._voice.config.sample_rate  # type: ignore[attr-defined]
         ids = pinyin_to_ids(flat, self._voice.config.phoneme_id_map)  # type: ignore[attr-defined]
-        audio = self._voice.phoneme_ids_to_audio(ids)  # type: ignore[attr-defined]
+        audio = self._voice.phoneme_ids_to_audio(ids, self._syn_config)  # type: ignore[attr-defined]
+        if isinstance(audio, tuple):
+            audio = audio[0]
         audio = np.clip(audio, -1.0, 1.0)
         pcm = (audio * 32767).astype(np.int16)
 

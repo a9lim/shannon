@@ -102,11 +102,11 @@ class Brain:
     # ------------------------------------------------------------------
 
     async def _on_user_input(self, event: UserInput) -> None:
-        logger.debug("Received UserInput: %r", event.text)
+        logger.info("UserInput: %s", event.text[:120])
         await self._process_input(GenerationRequest(text=event.text))
 
     async def _on_chat_message(self, event: ChatMessage) -> None:
-        logger.debug("Received ChatMessage from %s/%s: %r", event.platform, event.channel, event.text)
+        logger.info("ChatMessage from %s/%s: %s", event.platform, event.channel, event.text[:120])
 
         # Extract images and text from attachments
         images: list[bytes] = []
@@ -176,7 +176,7 @@ class Brain:
 
     async def _on_voice_input(self, event: VoiceInput) -> None:
         """Handle transcribed voice channel speech."""
-        logger.debug("Received VoiceInput from %s: %r", event.channel, event.text)
+        logger.info("VoiceInput from channel %s: %s", event.channel, event.text[:120])
 
         prob = self._config.messaging.voice.voice_reply_probability
         if prob < 1.0 and random.random() > prob:
@@ -283,10 +283,12 @@ class Brain:
 
             # ---- Turn loop (tool results + continue) ----
             for _iteration in range(max_iterations):
-                logger.debug("Sending %d messages to LLM with %d tools", len(messages), len(tools))
+                logger.debug("Sending %d messages to LLM (iteration %d)", len(messages), _iteration)
                 llm_response = await self._claude.generate(messages=messages, tools=tools, betas=betas)
-                logger.debug("LLM response text: %s", llm_response.text)
-                logger.debug("LLM tool calls: %s", llm_response.tool_calls)
+                if llm_response.tool_calls:
+                    tool_names = [tc.name for tc in llm_response.tool_calls]
+                    logger.info("LLM requested tools: %s", ", ".join(tool_names))
+                logger.debug("LLM response text: %s", llm_response.text[:200] if llm_response.text else "(empty)")
 
                 # Process tool calls and collect results
                 expressions: list[dict] = []
@@ -335,6 +337,9 @@ class Brain:
                 # Collect response text
                 if llm_response.text:
                     all_responses.append(llm_response.text)
+                    logger.info("Response text (%d chars): %s", len(llm_response.text), llm_response.text[:200])
+                elif llm_response.stop_reason == "end_turn":
+                    logger.warning("end_turn with empty text — output may be all thinking tokens")
 
                 # Emit LLMResponse event for this turn's text
                 if llm_response.text:
@@ -408,12 +413,12 @@ class Brain:
                 if wants_continue:
                     continue_count += 1
                     if continue_count > max_continues:
-                        logger.debug("Continue cap reached (%d)", max_continues)
+                        logger.info("Continue cap reached (%d/%d)", continue_count, max_continues)
                         break
 
             else:
                 # Loop exhausted without breaking — make a final tool-free call
-                logger.debug("Tool loop exhausted after %d iterations, making final call", max_iterations)
+                logger.warning("Tool loop exhausted after %d iterations, making final tool-free call", max_iterations)
                 llm_response = await self._claude.generate(messages=messages, tools=None, betas=betas)
                 if llm_response.text:
                     all_responses.append(llm_response.text)
@@ -444,4 +449,8 @@ class Brain:
             elif max_history == 0:
                 self._history.clear()
 
+            if not all_responses:
+                logger.warning("_process_input completed with no response text")
+            else:
+                logger.info("_process_input completed with %d response(s)", len(all_responses))
             return all_responses

@@ -175,6 +175,9 @@ class ClaudeClient:
         text_parts: list[str] = []
         tool_calls: list[LLMToolCall] = []
 
+        block_types = [block.type for block in response.content]
+        logger.debug("Response block types: %s", block_types)
+
         for block in response.content:
             btype = block.type
             if btype == "text":
@@ -242,11 +245,10 @@ class ClaudeClient:
         system_blocks, api_messages = self._build_messages(messages)
         kwargs = self._build_kwargs(api_messages, system_blocks, tools, betas)
 
-        logger.debug(
-            "Claude API request: model=%s, max_tokens=%d, messages=%d",
-            kwargs["model"],
-            kwargs["max_tokens"],
-            len(api_messages),
+        n_tools = len(kwargs.get("tools", []) or [])
+        logger.info(
+            "API call → model=%s, %d messages, %d tools",
+            kwargs["model"], len(api_messages), n_tools,
         )
 
         async with self._client.beta.messages.stream(**kwargs) as stream:
@@ -254,20 +256,17 @@ class ClaudeClient:
 
         input_tokens = getattr(response.usage, "input_tokens", 0)
         output_tokens = getattr(response.usage, "output_tokens", 0)
+        cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+        cache_create = getattr(response.usage, "cache_creation_input_tokens", 0)
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
 
-        if input_tokens + output_tokens > 5000:
-            logger.info(
-                "Expensive turn: input=%d output=%d (session total: in=%d out=%d)",
-                input_tokens, output_tokens,
-                self.total_input_tokens, self.total_output_tokens,
-            )
-
-        logger.debug(
-            "Claude API response: stop_reason=%s, usage=%s",
+        logger.info(
+            "API response ← stop=%s, in=%d out=%d (cache: read=%d create=%d) | session total: in=%d out=%d",
             response.stop_reason,
-            response.usage,
+            input_tokens, output_tokens,
+            cache_read, cache_create,
+            self.total_input_tokens, self.total_output_tokens,
         )
 
         return self._parse_response(response)

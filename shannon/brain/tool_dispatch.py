@@ -141,34 +141,43 @@ class ToolDispatcher:
             return "ok"
 
         if name == "set_expression":
+            _log.info("Expression → %s (%.1f)", args.get("name", "?"), args.get("intensity", 0))
             return "ok"
 
         # Confirmation gate for client-side gated tools
         if self._needs_confirmation(name):
+            _log.info("Awaiting user confirmation for %s", name)
             approved = await self._request_confirmation(name, args)
             if not approved:
+                _log.info("User denied %s", name)
                 return f"Tool execution denied by user: {name}"
+            _log.info("User approved %s", name)
 
         if name == "bash":
             if self._bash is None:
                 return "Error: bash executor is not available."
+            _log.info("Executing bash: %s", args.get("command", "")[:120])
             return await self._bash.execute(args)
 
         if name == "str_replace_based_edit_tool":
             if self._text_editor is None:
                 return "Error: text_editor executor is not available."
+            _log.info("Text editor %s on %s", args.get("command", "?"), args.get("path", "?"))
             return self._text_editor.execute(args)
 
         if name == "computer":
             if self._computer is None:
                 return "Error: computer executor is not available."
+            _log.info("Computer action: %s", args.get("action", "?"))
             return await self._computer.execute(args)
 
         if name == "memory":
             if self._memory is None:
                 return "Error: memory backend is not available."
+            _log.info("Memory %s", args.get("command", "?"))
             return self._memory.execute(args)
 
+        _log.warning("Unknown tool: %s", name)
         return f"Unknown tool: {name}"
 
     # ------------------------------------------------------------------
