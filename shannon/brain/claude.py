@@ -156,7 +156,11 @@ class ClaudeClient:
                 prev_blocks = _to_blocks(prev["content"])
                 new_blocks = _to_blocks(msg["content"])
                 combined = prev_blocks + new_blocks
-                merged[-1] = {"role": msg["role"], "content": combined if combined else ""}
+                if combined:
+                    merged[-1] = {"role": msg["role"], "content": combined}
+                else:
+                    # Both empty — don't merge into ""; keep as separate messages
+                    merged.append(msg)
             else:
                 merged.append(msg)
 

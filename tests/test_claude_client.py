@@ -414,3 +414,17 @@ def test_build_messages_uses_detected_media_type():
     content = api_messages[0]["content"]
     img_block = next(b for b in content if b["type"] == "image")
     assert img_block["source"]["media_type"] == "image/jpeg"
+
+
+def test_normalize_messages_empty_same_role_merge():
+    """Two empty same-role messages must not be merged into a single empty-string message."""
+    from shannon.brain.claude import ClaudeClient
+
+    msgs = [
+        {"role": "assistant", "content": ""},
+        {"role": "assistant", "content": ""},
+    ]
+    result = ClaudeClient._normalize_messages(msgs)
+    # Both empty — cannot produce a single merged message with content "".
+    # They are kept as separate messages rather than collapsed into bad state.
+    assert not any(msg["content"] == "" and len(result) == 1 for msg in result)
