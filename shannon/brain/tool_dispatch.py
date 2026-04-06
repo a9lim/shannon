@@ -161,7 +161,7 @@ class ToolDispatcher:
             if self._text_editor is None:
                 return "Error: text_editor executor is not available."
             _log.info("Text editor %s on %s", args.get("command", "?"), args.get("path", "?"))
-            return self._text_editor.execute(args)
+            return await asyncio.to_thread(self._text_editor.execute, args)
 
         if name == "computer":
             if self._computer is None:

@@ -112,7 +112,7 @@ class TextEditorExecutor:
         if p.exists():
             return f"Error: File {path} already exists"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(file_text)
+        p.write_text(file_text, encoding="utf-8")
         return f"File created successfully at {path}"
 
     # ------------------------------------------------------------------
@@ -156,7 +156,7 @@ class TextEditorExecutor:
             )
 
         new_content = content.replace(old_str, new_str, 1)
-        p.write_text(new_content)
+        p.write_text(new_content, encoding="utf-8")
         return f"Replacement performed successfully in {path}"
 
     # ------------------------------------------------------------------
@@ -190,5 +190,5 @@ class TextEditorExecutor:
         if insert_text and not insert_text.endswith("\n"):
             insert_text += "\n"
         lines.insert(insert_line, insert_text)
-        p.write_text("".join(lines))
+        p.write_text("".join(lines), encoding="utf-8")
         return f"Text inserted at line {insert_line} in {path}"

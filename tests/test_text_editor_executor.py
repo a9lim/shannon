@@ -354,6 +354,18 @@ def test_insert_on_directory_returns_error(executor, tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_create_writes_utf8(tmp_path):
+    """_create must write UTF-8 regardless of platform locale."""
+    from shannon.config import TextEditorConfig
+    from shannon.tools.text_editor_executor import TextEditorExecutor
+
+    executor = TextEditorExecutor(TextEditorConfig())
+    path = str(tmp_path / "unicode.txt")
+    executor.execute({"command": "create", "path": path, "file_text": "caf\u00e9 \u00fc\u00e9"})
+    raw = (tmp_path / "unicode.txt").read_bytes()
+    assert raw.decode("utf-8") == "caf\u00e9 \u00fc\u00e9"
+
+
 def test_unexpected_exception_returns_error_string(executor, tmp_path, monkeypatch):
     """Unexpected exceptions should be caught and returned as error strings."""
     import shannon.tools.text_editor_executor as te
