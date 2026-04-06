@@ -42,7 +42,7 @@ class WhisperProvider(STTProvider):
 
     async def transcribe(self, audio: bytes) -> str:
         """Transcribe audio bytes to text."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._transcribe_blocking, audio)
 
     async def stream_transcribe(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:

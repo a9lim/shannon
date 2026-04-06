@@ -41,7 +41,7 @@ class ScreenCapture(VisionProvider):
         import mss
         import mss.tools
         with mss.mss() as sct:
-            monitor = sct.monitors[0]
+            monitor = sct.monitors[1]  # primary monitor (monitors[0] is combined virtual screen)
             screenshot = sct.grab(monitor)
             png_bytes = mss.tools.to_png(screenshot.rgb, screenshot.size)
         return _resize_image(png_bytes, self._max_width, self._max_height)

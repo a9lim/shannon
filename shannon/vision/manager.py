@@ -33,7 +33,7 @@ class VisionManager:
         """Start the periodic capture loop. Runs until stop() is called."""
         self._running = True
         while self._running:
-            start = asyncio.get_event_loop().time()
+            start = asyncio.get_running_loop().time()
             for provider in self._providers:
                 try:
                     image = await provider.capture()
@@ -42,7 +42,7 @@ class VisionManager:
                     )
                 except Exception:
                     logger.debug("Capture failed for %s", provider.source_name(), exc_info=True)
-            elapsed = asyncio.get_event_loop().time() - start
+            elapsed = asyncio.get_running_loop().time() - start
             await asyncio.sleep(max(0, self._interval - elapsed))
 
     def stop(self) -> None:
