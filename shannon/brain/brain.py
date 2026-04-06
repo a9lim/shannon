@@ -285,6 +285,13 @@ class Brain:
             for _iteration in range(max_iterations):
                 logger.debug("Sending %d messages to LLM (iteration %d)", len(messages), _iteration)
                 llm_response = await self._claude.generate(messages=messages, tools=tools, betas=betas)
+
+                # Strip images after first send to avoid re-transmitting on tool loops
+                if _iteration == 0:
+                    for msg in messages:
+                        if msg.images:
+                            msg.images = []
+
                 if llm_response.tool_calls:
                     tool_names = [tc.name for tc in llm_response.tool_calls]
                     logger.info("LLM requested tools: %s", ", ".join(tool_names))
@@ -430,10 +437,11 @@ class Brain:
             # Store text-only copies in history (images are one-time context)
             combined_text = "\n\n".join(all_responses)
             if combined_text:
-                self._history.append(LLMMessage(
-                    role="user",
-                    content=user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content),
-                ))
+                # Store original text without [Context: ...] prefix
+                history_content = user_msg.content if isinstance(user_msg.content, str) else str(user_msg.content)
+                if history_content.startswith("[Context: ") and "]\n" in history_content:
+                    history_content = history_content[history_content.index("]\n") + 2:]
+                self._history.append(LLMMessage(role="user", content=history_content))
                 self._history.append(LLMMessage(
                     role="assistant",
                     content=combined_text,

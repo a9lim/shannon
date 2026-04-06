@@ -887,3 +887,33 @@ async def test_brain_continue_cap_exact():
     await bus.publish(UserInput(text="test", source="text"))
     # 1 initial + 2 continues + 1 final tool-free = 4 max
     assert claude.call_count <= 4
+
+
+async def test_brain_history_strips_dynamic_context():
+    """History should not contain [Context: ...] prefix from dynamic_context."""
+    bus = EventBus()
+    config = ShannonConfig()
+    config.memory.max_session_messages = 10
+
+    claude = FakeClaude(text="response")
+    dispatcher = FakeDispatcher()
+    registry = FakeRegistry()
+
+    brain = Brain(bus=bus, claude=claude, dispatcher=dispatcher, registry=registry, config=config)
+    await brain.start()
+
+    await bus.publish(ChatMessage(
+        text="hello",
+        author="user1",
+        platform="discord",
+        channel="ch1",
+        message_id="m1",
+        custom_emojis="Custom emojis: :foo:, :bar:",
+        participants={"123": "Alice"},
+    ))
+
+    # Check stored history
+    assert len(brain._history) >= 2
+    user_msg = brain._history[-2]
+    assert "[Context:" not in user_msg.content
+    assert "hello" in user_msg.content
