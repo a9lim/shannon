@@ -193,7 +193,13 @@ class MessagingManager:
                 if provider:
                     typing_task = asyncio.create_task(_typing_loop(provider, channel_id))
 
-                await self._bus.publish(event)
+                try:
+                    await self._bus.publish(event)
+                except Exception:
+                    logger.exception(
+                        "Failed to publish ChatMessage for %s:%s",
+                        event.platform, event.channel,
+                    )
             finally:
                 if typing_task is not None:
                     typing_task.cancel()
