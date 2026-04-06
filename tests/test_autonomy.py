@@ -126,6 +126,39 @@ async def test_cooldown_respected():
 
 
 @pytest.mark.asyncio
+async def test_per_trigger_type_cooldown():
+    """idle_timeout firing should not suppress screen_change within cooldown."""
+    import time
+
+    config = ShannonConfig()
+    config.autonomy.cooldown_seconds = 60
+    config.autonomy.idle_timeout_seconds = 1
+    config.autonomy.triggers = ["idle_timeout", "screen_change"]
+
+    bus = EventBus()
+    loop = AutonomyLoop(bus=bus, config=config)
+
+    triggers = []
+
+    async def capture(e):
+        triggers.append(e)
+
+    bus.subscribe(AutonomousTrigger, capture)
+
+    loop._last_input_time = time.time() - 100
+    await loop._evaluate()
+    assert len(triggers) == 1
+    assert triggers[0].reason == "idle_timeout"
+
+    loop._latest_frame = VisionFrame(image=b"new_image", source="screen")
+    loop._last_frame_hash = "old_hash"
+    loop._last_checked_frame = None
+    await loop._evaluate()
+    assert len(triggers) == 2
+    assert triggers[1].reason == "screen_change"
+
+
+@pytest.mark.asyncio
 async def test_disabled_does_nothing():
     """AutonomyLoop.run() returns immediately when autonomy.enabled is False."""
     bus = EventBus()

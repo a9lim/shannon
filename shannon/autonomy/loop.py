@@ -16,7 +16,7 @@ class AutonomyLoop:
         self._bus = bus
         self._config = config
         self._running = False
-        self._last_trigger_time = 0.0
+        self._last_trigger_times: dict[str, float] = {}
         self._last_input_time = time.time()
         self._last_frame_hash = ""
         self._latest_frame: VisionFrame | None = None
@@ -50,36 +50,33 @@ class AutonomyLoop:
         now = time.time()
         cfg = self._config.autonomy
         cooldown = cfg.cooldown_seconds
-
-        # Respect cooldown between triggers
-        if now - self._last_trigger_time < cooldown:
-            return
-
         triggers = cfg.triggers
 
-        # Check idle_timeout trigger
+        # Check idle_timeout trigger (per-trigger cooldown)
         if "idle_timeout" in triggers:
-            idle_seconds = now - self._last_input_time
-            if idle_seconds >= cfg.idle_timeout_seconds:
-                self._last_trigger_time = now
-                self._last_input_time = now  # reset so we don't fire again immediately
-                await self._bus.publish(AutonomousTrigger(
-                    reason="idle_timeout",
-                    context=f"No user input for {idle_seconds:.1f}s",
-                ))
-                return
-
-        # Check screen_change trigger
-        if "screen_change" in triggers and self._latest_frame is not None:
-            if self._latest_frame is not self._last_checked_frame:
-                self._last_checked_frame = self._latest_frame
-                frame_hash = hashlib.md5(self._latest_frame.image).hexdigest()
-                if frame_hash != self._last_frame_hash and self._last_frame_hash != "":
-                    self._last_trigger_time = now
-                    self._last_frame_hash = frame_hash
+            if now - self._last_trigger_times.get("idle_timeout", 0.0) >= cooldown:
+                idle_seconds = now - self._last_input_time
+                if idle_seconds >= cfg.idle_timeout_seconds:
+                    self._last_trigger_times["idle_timeout"] = now
+                    self._last_input_time = now  # reset so we don't fire again immediately
                     await self._bus.publish(AutonomousTrigger(
-                        reason="screen_change",
-                        context=f"Screen content changed (hash: {frame_hash[:8]})",
+                        reason="idle_timeout",
+                        context=f"No user input for {idle_seconds:.1f}s",
                     ))
                     return
-                self._last_frame_hash = frame_hash
+
+        # Check screen_change trigger (per-trigger cooldown)
+        if "screen_change" in triggers and self._latest_frame is not None:
+            if now - self._last_trigger_times.get("screen_change", 0.0) >= cooldown:
+                if self._latest_frame is not self._last_checked_frame:
+                    self._last_checked_frame = self._latest_frame
+                    frame_hash = hashlib.md5(self._latest_frame.image).hexdigest()
+                    if frame_hash != self._last_frame_hash and self._last_frame_hash != "":
+                        self._last_trigger_times["screen_change"] = now
+                        self._last_frame_hash = frame_hash
+                        await self._bus.publish(AutonomousTrigger(
+                            reason="screen_change",
+                            context=f"Screen content changed (hash: {frame_hash[:8]})",
+                        ))
+                        return
+                    self._last_frame_hash = frame_hash
