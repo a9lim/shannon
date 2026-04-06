@@ -15,13 +15,20 @@ class ToolRegistry:
 
     def __init__(self, config: ShannonConfig) -> None:
         self._config = config
+        self._full_tools = self._build("full")
+        self._chat_tools = self._build("chat")
+        self._betas = self._build_beta_headers()
 
     def build(self, mode: str = "full") -> list[dict]:
-        """Return tools in Anthropic API format.
+        """Return tools in Anthropic API format (cached at init)."""
+        return self._full_tools if mode == "full" else self._chat_tools
 
-        Args:
-            mode: "full" for all tools, "chat" for minimal conversational set.
-        """
+    def beta_headers(self) -> list[str]:
+        """Return the list of Anthropic beta header strings (cached at init)."""
+        return self._betas
+
+    def _build(self, mode: str) -> list[dict]:
+        """Build tools list (called once at init per mode)."""
         tools: list[dict] = []
 
         if mode == "full":
@@ -97,8 +104,8 @@ class ToolRegistry:
 
         return tools
 
-    def beta_headers(self) -> list[str]:
-        """Return the list of Anthropic beta header strings based on config."""
+    def _build_beta_headers(self) -> list[str]:
+        """Build the list of Anthropic beta header strings based on config."""
         headers: list[str] = []
 
         if self._config.tools.computer_use.enabled:

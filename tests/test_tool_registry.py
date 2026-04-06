@@ -258,3 +258,19 @@ def test_build_default_mode_is_full():
     tools_default = registry.build()
     tools_full = registry.build(mode="full")
     assert len(tools_default) == len(tools_full)
+
+
+def test_build_returns_cached_list():
+    """build() should return the same object on repeated calls (cached at init)."""
+    config = make_config()
+    registry = ToolRegistry(config)
+    first = registry.build("full")
+    second = registry.build("full")
+    assert first is second
+
+    chat_first = registry.build("chat")
+    chat_second = registry.build("chat")
+    assert chat_first is chat_second
+
+    # full and chat should be different objects
+    assert first is not chat_first
