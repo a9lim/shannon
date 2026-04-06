@@ -411,7 +411,7 @@ def test_voice_manager_muted_skips_buffering():
     from shannon.messaging.providers.discord_voice import VoiceManager
 
     vm, bus, client = _make_voice_manager(enabled=True, mute_during_playback=True)
-    vm._muted = True
+    vm._muted.set()
     vm._ssrc_to_user[99] = ("user_1", "Alice")
 
     header = struct.pack(">BBHII", 0x80, 120, 1, 100, 99)
@@ -524,7 +524,7 @@ async def test_voice_output_mutes_during_playback():
     muted_during_play = None
     def capture_play(source, **kwargs):
         nonlocal muted_during_play
-        muted_during_play = vm._muted
+        muted_during_play = vm._muted.is_set()
     fake_vc.play = capture_play
 
     await vm._on_voice_output(event)
@@ -651,7 +651,7 @@ def test_dave_decrypt_passthrough_when_no_dave():
     vm._ssrc_to_user[99] = ("123", "Alice")
 
     data = b"\xDE\xAD\xBE\xEF"
-    result = vm._dave_decrypt(99, data)
+    result = vm._dave_decrypt(99, data, user_info=("123", "Alice"))
     assert result == data
 
 
@@ -668,7 +668,7 @@ def test_dave_decrypt_calls_session():
     vm._voice_clients["guild_1"] = fake_vc
     vm._ssrc_to_user[99] = ("123", "Alice")
 
-    result = vm._dave_decrypt(99, b"\x00\x01\x02")
+    result = vm._dave_decrypt(99, b"\x00\x01\x02", user_info=("123", "Alice"))
     assert result == b"\xCA\xFE"
 
     import davey
@@ -688,5 +688,32 @@ def test_dave_decrypt_returns_none_on_failure():
     vm._voice_clients["guild_1"] = fake_vc
     vm._ssrc_to_user[99] = ("123", "Alice")
 
-    result = vm._dave_decrypt(99, b"\x00\x01")
+    result = vm._dave_decrypt(99, b"\x00\x01", user_info=("123", "Alice"))
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Buffer cleanup on SSRC change (Task 10)
+# ---------------------------------------------------------------------------
+
+async def test_handle_speaking_update_cleans_old_buffers():
+    """When a user's SSRC changes, old buffer entries should be cleaned up."""
+    from shannon.messaging.providers.discord_voice import UserAudioBuffer
+
+    vm, bus, client = _make_voice_manager(enabled=True)
+
+    # Register old SSRC with a buffer
+    vm._ssrc_to_user[10] = ("user_1", "Alice")
+    buf = UserAudioBuffer(max_seconds=30.0, sample_rate=48000, channels=2)
+    buf.append(b"\x00" * 3840)
+    vm._user_buffers[10] = buf
+
+    # Update to new SSRC
+    vm.handle_speaking_update(user_id="user_1", ssrc=20, display_name="Alice")
+
+    # Old SSRC should be removed from both maps
+    assert 10 not in vm._ssrc_to_user
+    assert 10 not in vm._user_buffers
+    # New SSRC should be registered
+    assert 20 in vm._ssrc_to_user
+    assert vm._ssrc_to_user[20] == ("user_1", "Alice")

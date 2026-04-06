@@ -211,9 +211,9 @@ class VoiceManager:
         self._user_buffers: dict[int, UserAudioBuffer] = {}  # ssrc -> buffer
         self._ssrc_to_user: dict[int, tuple[str, str]] = {}  # ssrc -> (user_id, display_name)
         self._silence_task: asyncio.Task | None = None
-        self._muted = False
+        self._muted = threading.Event()
         self._opus_decoder = None
-        self._lock = threading.Lock()  # Protects _user_buffers and _opus_decoder from socket thread
+        self._lock = threading.Lock()  # Protects _user_buffers, _opus_decoder, _ssrc_to_user from socket thread
 
     async def start(self) -> None:
         from shannon.events import VoiceOutput
@@ -293,10 +293,12 @@ class VoiceManager:
 
     def handle_speaking_update(self, user_id: str, ssrc: int, display_name: str) -> None:
         """Register or update SSRC-to-user mapping from a SPEAKING event."""
-        old_ssrcs = [s for s, (uid, _) in self._ssrc_to_user.items() if uid == user_id]
-        for old_ssrc in old_ssrcs:
-            del self._ssrc_to_user[old_ssrc]
-        self._ssrc_to_user[ssrc] = (user_id, display_name)
+        with self._lock:
+            old_ssrcs = [s for s, (uid, _) in self._ssrc_to_user.items() if uid == user_id]
+            for old_ssrc in old_ssrcs:
+                del self._ssrc_to_user[old_ssrc]
+                self._user_buffers.pop(old_ssrc, None)
+            self._ssrc_to_user[ssrc] = (user_id, display_name)
         logger.debug("SSRC %d -> user %s (%s)", ssrc, user_id, display_name)
 
     def _register_audio_listener(self, vc: Any) -> None:
@@ -345,9 +347,10 @@ class VoiceManager:
         """Callback for raw UDP packets from Discord voice socket.
 
         Called from discord.py's SocketReader thread — not the asyncio event loop.
-        Uses self._lock to synchronize access to _user_buffers and _opus_decoder.
+        Uses self._lock to synchronize access to _user_buffers, _ssrc_to_user,
+        and _opus_decoder.
         """
-        if self._muted and self._config.mute_during_playback:
+        if self._muted.is_set() and self._config.mute_during_playback:
             return
 
         parsed = parse_rtp_header(data)
@@ -356,15 +359,17 @@ class VoiceManager:
 
         seq, ts, ssrc, payload = parsed
 
-        if ssrc not in self._ssrc_to_user:
-            return
+        with self._lock:
+            if ssrc not in self._ssrc_to_user:
+                return
+            user_info = self._ssrc_to_user[ssrc]
 
         decrypted = self._decrypt_payload(payload, data[:12])
         if decrypted is None:
             return
 
         # DAVE E2EE: second decryption layer if active
-        decrypted = self._dave_decrypt(ssrc, decrypted)
+        decrypted = self._dave_decrypt(ssrc, decrypted, user_info)
         if decrypted is None:
             return
 
@@ -431,7 +436,7 @@ class VoiceManager:
             logger.debug("AES-GCM decryption failed", exc_info=True)
             return None
 
-    def _dave_decrypt(self, ssrc: int, data: bytes) -> bytes | None:
+    def _dave_decrypt(self, ssrc: int, data: bytes, user_info: tuple[str, str] | None = None) -> bytes | None:
         """Decrypt the DAVE E2EE layer if active, otherwise pass through.
 
         DAVE (Discord Audio/Video Encryption) is a second encryption layer
@@ -445,7 +450,6 @@ class VoiceManager:
             if dave_session is None or not dave_session.ready:
                 return data  # No DAVE — pass through
 
-            user_info = self._ssrc_to_user.get(ssrc)
             if user_info is None:
                 return None
 
@@ -567,16 +571,22 @@ class VoiceManager:
             return
 
         # Wait for any current playback to finish (sequential queuing)
+        timeout = 30.0
+        waited = 0.0
         while target_vc.is_playing():
             await asyncio.sleep(0.2)
+            waited += 0.2
+            if waited >= timeout:
+                logger.warning("Playback wait timed out after %.0fs", timeout)
+                break
 
         source = ChunkAudioSource(event.audio, volume=self._config.volume)
 
         if self._config.mute_during_playback:
-            self._muted = True
+            self._muted.set()
 
         def after_play(error: Exception | None) -> None:
-            self._muted = False
+            self._muted.clear()
             if error:
                 logger.warning("Error during voice playback: %s", error)
 
