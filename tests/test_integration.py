@@ -28,7 +28,7 @@ class FakeDispatcher:
     @staticmethod
     def is_expression(name): return name == "set_expression"
     @staticmethod
-    def is_server_side(name): return name in {"web_search", "web_fetch", "code_execution"}
+    def is_server_side(name): return name in {"web_search", "web_fetch", "code_execution", "memory"}
 
 class FakeRegistry:
     def build(self, mode="full"): return []

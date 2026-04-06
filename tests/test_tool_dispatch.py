@@ -22,13 +22,11 @@ def _make_dispatcher(
     computer=None,
     bash=None,
     text_editor=None,
-    memory=None,
 ) -> ToolDispatcher:
     return ToolDispatcher(
         computer_executor=computer,
         bash_executor=bash,
         text_editor_executor=text_editor,
-        memory_backend=memory,
     )
 
 
@@ -61,25 +59,8 @@ async def test_dispatch_text_editor_routes_to_text_editor_executor():
     assert result == "edit result"
 
 
-async def test_memory_routes_to_memory_backend():
-    """memory tool is client-side — routed to memory_backend.execute."""
-    memory = MagicMock()
-    memory.execute = MagicMock(return_value="memory result")
-    dispatcher = _make_dispatcher(memory=memory)
-
-    result = await dispatcher.dispatch(_make_call("memory", {"command": "view", "path": "/memories"}))
-
-    memory.execute.assert_called_once_with({"command": "view", "path": "/memories"})
-    assert result == "memory result"
-
-
-async def test_memory_with_none_backend_returns_error():
-    """If memory_backend is None, dispatch returns an error string."""
-    dispatcher = _make_dispatcher(memory=None)
-
-    result = await dispatcher.dispatch(_make_call("memory", {"command": "view", "path": "/memories"}))
-
-    assert "error" in result.lower()
+def test_memory_is_server_side():
+    assert ToolDispatcher.is_server_side("memory") is True
 
 
 async def test_dispatch_computer_routes_to_computer_executor():
@@ -192,7 +173,6 @@ def test_is_server_side_false():
     assert ToolDispatcher.is_server_side("bash") is False
     assert ToolDispatcher.is_server_side("computer") is False
     assert ToolDispatcher.is_server_side("set_expression") is False
-    assert ToolDispatcher.is_server_side("memory") is False
 
 
 # ---------------------------------------------------------------------------

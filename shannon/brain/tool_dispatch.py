@@ -11,7 +11,7 @@ from shannon.brain.types import LLMToolCall
 
 _log = logging.getLogger(__name__)
 
-_SERVER_SIDE_TOOLS = {"web_search", "web_fetch", "code_execution"}
+_SERVER_SIDE_TOOLS = {"web_search", "web_fetch", "code_execution", "memory"}
 
 _CONFIRMATION_TIMEOUT = 120
 
@@ -43,14 +43,12 @@ class ToolDispatcher:
         computer_executor: Any = None,
         bash_executor: Any = None,
         text_editor_executor: Any = None,
-        memory_backend: Any = None,
         tools_config: Any = None,
         bus: Any = None,
     ) -> None:
         self._computer = computer_executor
         self._bash = bash_executor
         self._text_editor = text_editor_executor
-        self._memory = memory_backend
         self._tools_config = tools_config
         self._bus = bus
         self.channel_id: str = ""
@@ -170,12 +168,6 @@ class ToolDispatcher:
                 return "Error: computer executor is not available."
             _log.info("Computer action: %s", args.get("action", "?"))
             return await self._computer.execute(args)
-
-        if name == "memory":
-            if self._memory is None:
-                return "Error: memory backend is not available."
-            _log.info("Memory %s", args.get("command", "?"))
-            return self._memory.execute(args)
 
         _log.warning("Unknown tool: %s", name)
         return f"Unknown tool: {name}"

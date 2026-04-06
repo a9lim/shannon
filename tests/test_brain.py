@@ -94,7 +94,7 @@ class FakeDispatcher:
 
     @staticmethod
     def is_server_side(name):
-        return name in {"web_search", "web_fetch", "code_execution"}
+        return name in {"web_search", "web_fetch", "code_execution", "memory"}
 
 
 class FakeRegistry:
@@ -620,7 +620,7 @@ class RaisingDispatcher:
 
     @staticmethod
     def is_server_side(name):
-        return name in {"web_search", "web_fetch", "code_execution"}
+        return name in {"web_search", "web_fetch", "code_execution", "memory"}
 
 
 @pytest.mark.asyncio
