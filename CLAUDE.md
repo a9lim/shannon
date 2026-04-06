@@ -26,6 +26,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 - **Anthropic native tools** — server-side tools (`web_search`, `web_fetch`, `code_execution`, `memory`) are declared in the tools list and handled by the API. Client-side tools (`computer`, `bash`, `str_replace_based_edit_tool`) are executed locally by tool executors in `shannon/tools/` and `shannon/computer/`.
 - **No ActionManager** — tool calls from the LLM are dispatched directly by `ToolDispatcher`. Confirmation is handled via the event bus: `ToolDispatcher` publishes `ToolConfirmationRequest`, a handler (CLI stdin by default) prompts the user and publishes `ToolConfirmationResponse`. Controlled by `require_confirmation` flags in each tool's config (default `True`). `--dangerously-skip-permissions` sets all flags to `False`.
 - **Memory** uses the `memory` tool (type `memory_20250818`) — despite the Anthropic-hosted type name, this is a **client-side** tool. The API returns `tool_use` blocks that require `tool_result` responses. `MemoryBackend` (`shannon/tools/memory_backend.py`) executes file operations (view, create, str_replace, insert, delete, rename) against a local directory (`config.memory.dir`/memories/).
+- **CLI terminal I/O** — `shannon/cli.py` provides `safe_print()` / `safe_input()` backed by GNU readline. Output from async event handlers (Discord messages, autonomy triggers) clears the current input line, prints, then calls `readline.redisplay()` to restore the prompt and partial input. All CLI output goes through `safe_print()`; all CLI input goes through `safe_input()` (which shows a `You> ` prompt with readline history/editing).
 - Optional deps are lazy-imported with `try/except ImportError` — missing deps degrade gracefully with a warning.
 
 ## Anthropic API Features
@@ -111,7 +112,7 @@ Config fields: `tts.type` ("piper" or "coqui"), `tts.model` (model path for Pipe
 - **Onset clusters**: epenthetic vowel borrows from next semivowel (k before w→ku, t before w→tu). Sibilants get `i`, labials get `u`, others get `e`.
 - **Timing**: tone 5 (neutral) for unstressed syllables (shorter in model). Custom `pinyin_to_ids` pads only after tones and real punctuation, not spaces — words flow together within phrases.
 
-**Decryption chain:** Transport layer (XSalsa20-Poly1305 legacy or AEAD-AES256-GCM modern, auto-detected from negotiated mode) → DAVE E2EE layer (via `davey.DaveSession.decrypt`, transparent passthrough when DAVE is not active). Thread-safe: socket reader thread accesses shared buffers, opus decoder, and SSRC-to-user mappings under a `threading.Lock`. The mute-during-playback flag uses `threading.Event` for atomic cross-thread signaling.
+**Decryption chain:** Transport layer (auto-detected from negotiated mode) → strip RTP extension data → DAVE E2EE layer → opus decode. Supported transport modes: `aead_xchacha20_poly1305_rtpsize` (discord.py 2.7+ default, uses `nacl.secret.Aead`), `aead_aes256_gcm`, `xsalsa20_poly1305` / `_lite` / `_suffix`. Per RFC 9605, `_rtpsize` modes encrypt extension data as part of the payload — AAD is fixed header + extension header (not data), and extension data must be stripped after decryption. DAVE E2EE (`davey.DaveSession.decrypt`) has passthrough mode enabled on connect (120s) for MLS key exchange; decrypt failures pass through to opus decode as the final validator. SSRC-to-user mapping comes from SPEAKING (op 5) and CLIENT_CONNECT (op 12) voice websocket events, re-hooked every 5s to survive reconnects. Thread-safe: socket reader thread accesses shared buffers, opus decoder, and SSRC-to-user mappings under a `threading.Lock`. The mute-during-playback flag uses `threading.Event` for atomic cross-thread signaling.
 
 **Config fields:** `messaging.voice.enabled` (default false), `messaging.voice.auto_join_channels` (list of channel IDs, empty = any), `messaging.voice.silence_threshold` (0.5-10.0, default 2.0), `messaging.voice.buffer_max_seconds` (5.0-60.0, default 30.0), `messaging.voice.voice_reply_probability` (0-1, default 1.0), `messaging.voice.mute_during_playback` (default true), `messaging.voice.volume` (0-2, default 1.0).
 
@@ -133,6 +134,7 @@ shannon/
 ├── app.py              # Entry point, CLI args, module wiring
 ├── bus.py              # EventBus (async pub/sub)
 ├── events.py           # All event dataclasses
+├── cli.py              # Thread-safe terminal I/O (safe_print / safe_input)
 ├── config.py           # Config dataclasses + YAML loading
 ├── brain/              # LLM orchestration
 │   ├── brain.py        # Central manager — history, context, continue loop

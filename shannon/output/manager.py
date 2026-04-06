@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from shannon.cli import safe_print
 from shannon.events import ExpressionChange, LLMResponse, SpeechEnd, SpeechStart
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ class OutputManager:
         if self._speech_output and self._tts is not None:
             await self._speak(event.text)
         else:
-            print(event.text)
+            safe_print(event.text)
 
     async def _on_expression_change(self, event: ExpressionChange) -> None:
         if self._vtuber is not None:
@@ -76,7 +77,7 @@ class OutputManager:
         assert self._tts is not None
 
         # Always print the text so the CLI shows what was said
-        print(text)
+        safe_print(text)
 
         # Collect phonemes for lip-sync (best-effort)
         try:

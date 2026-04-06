@@ -116,9 +116,11 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     from shannon.events import ToolConfirmationRequest, ToolConfirmationResponse
 
     async def _cli_confirm_handler(event: ToolConfirmationRequest) -> None:
+        from shannon.cli import safe_print
+        safe_print(f"\n[{event.tool_name}] {event.description}")
         loop = asyncio.get_running_loop()
         answer = await loop.run_in_executor(
-            None, lambda: input(f"\n[{event.tool_name}] {event.description}\nAllow? [y/N]: ")
+            None, lambda: input("Allow? [y/N]: ")
         )
         approved = answer.strip().lower() in ("y", "yes")
         await bus.publish(ToolConfirmationResponse(
@@ -170,7 +172,14 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         if tts_type == "piper":
             try:
                 from shannon.output.providers.tts.piper import PiperProvider
-                tts_provider = PiperProvider(model_path=config.tts.model, speaker=config.tts.speaker)
+                tts_provider = PiperProvider(
+                    model_path=config.tts.model,
+                    speaker=config.tts.speaker,
+                    rate=config.tts.rate,
+                    noise_scale=config.tts.noise_scale,
+                    noise_w_scale=config.tts.noise_w_scale,
+                    sentence_silence=config.tts.sentence_silence,
+                )
             except ImportError:
                 logger.warning(
                     "piper-tts not installed; speech output unavailable. "
@@ -342,9 +351,11 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
+    from shannon.cli import safe_print
+
     name = config.personality.name
     mode_label = "speech" if speech_mode else "text"
-    print(f"{name} is online. Mode: {mode_label}. Press Ctrl+C to exit.")
+    safe_print(f"{name} is online. Mode: {mode_label}. Press Ctrl+C to exit.")
 
     # ------------------------------------------------------------------
     # Run
