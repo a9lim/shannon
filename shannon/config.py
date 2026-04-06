@@ -185,7 +185,6 @@ class PersonalityConfig:
 @dataclass
 class MemoryConfig:
     dir: str = "memory"
-    conversation_window: int = 20
     max_session_messages: int = 40
     recall_top_k: int = 5
     max_continues: int = 5
@@ -193,7 +192,6 @@ class MemoryConfig:
     def __post_init__(self) -> None:
         if _SKIP_VALIDATION:
             return
-        self.conversation_window = max(0, self.conversation_window)
         self.max_session_messages = max(0, self.max_session_messages)
         self.max_continues = max(0, self.max_continues)
 
@@ -220,10 +218,12 @@ class ShannonConfig:
 
 def _merge_dataclass(instance: Any, overrides: dict) -> None:
     """Recursively merge a dict of overrides into a dataclass instance."""
+    visited_keys: set[str] = set()
     for key, value in overrides.items():
         if not hasattr(instance, key):
             _log.warning("Unknown config key %r — ignored (typo?)", key)
             continue
+        visited_keys.add(key)
         current = getattr(instance, key)
         if isinstance(value, dict) and hasattr(current, "__dataclass_fields__"):
             _merge_dataclass(current, value)
@@ -246,6 +246,14 @@ def _merge_dataclass(instance: Any, overrides: dict) -> None:
                     _log.warning("Cannot convert %r to float for %s; skipping", value, key)
                     continue
             setattr(instance, key, value)
+    # Recurse into nested dataclass fields that were NOT in overrides,
+    # so their __post_init__ validators still run.
+    if hasattr(instance, "__dataclass_fields__"):
+        for field_name in instance.__dataclass_fields__:
+            if field_name not in visited_keys:
+                child = getattr(instance, field_name)
+                if hasattr(child, "__dataclass_fields__"):
+                    _merge_dataclass(child, {})
     # Re-run validation after merging overrides
     if hasattr(instance, "__post_init__"):
         instance.__post_init__()

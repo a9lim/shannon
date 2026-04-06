@@ -137,7 +137,6 @@ class TestOtherConfigDefaults:
     def test_memory_defaults(self):
         cfg = MemoryConfig()
         assert cfg.dir == "memory"
-        assert cfg.conversation_window == 20
         assert cfg.recall_top_k == 5
 
 
@@ -294,12 +293,12 @@ class TestLoadConfig:
         assert cfg.autonomy.idle_timeout_seconds == 600
 
     def test_override_memory(self):
-        data = {"memory": {"conversation_window": 100}}
+        data = {"memory": {"max_session_messages": 100}}
         with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
             yaml.dump(data, f)
             tmp_path = f.name
         cfg = load_config(tmp_path)
-        assert cfg.memory.conversation_window == 100
+        assert cfg.memory.max_session_messages == 100
         assert cfg.memory.recall_top_k == 5
         assert cfg.memory.dir == "memory"
 
@@ -319,6 +318,18 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.messaging.debounce_delay == 60.0
         assert cfg.messaging.reply_probability == 1.0
+
+
+def test_load_nonexistent_config_still_validates_nested():
+    """load_config with nonexistent path must run nested __post_init__ validators."""
+    import os
+    old = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        with pytest.raises(ValueError, match="API key required"):
+            load_config("/nonexistent/path/config.yaml")
+    finally:
+        if old is not None:
+            os.environ["ANTHROPIC_API_KEY"] = old
 
 
 class TestConfigFailHard:
@@ -434,10 +445,6 @@ class TestConfigValidation:
         assert cfg.timeout_seconds >= 1
 
     # MemoryConfig validation
-    def test_memory_conversation_window_minimum(self):
-        cfg = MemoryConfig(conversation_window=-1)
-        assert cfg.conversation_window >= 0
-
     def test_memory_max_continues_minimum(self):
         cfg = MemoryConfig(max_continues=-1)
         assert cfg.max_continues >= 0
