@@ -7,7 +7,7 @@ AI VTuber powered by Claude. Async event bus architecture with direct Anthropic 
 ```bash
 pip install -e ".[dev]"           # Core + test deps
 pip install -e ".[all,dev]"       # All optional providers
-python3 -m pytest tests/ -v       # Run tests (478 tests, ~29s)
+python3 -m pytest tests/ -v       # Run tests (451 tests, ~32s)
 shannon                           # Run (needs API key in config.yaml or ANTHROPIC_API_KEY env var)
 shannon --speech                  # Speech I/O mode
 shannon --dangerously-skip-permissions  # Skip tool confirmation prompts
@@ -22,10 +22,10 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 ## Key Patterns
 
 - **Brain decomposed** into `brain.py` (orchestration), `claude.py` (API client), `tool_dispatch.py` (executor routing), `tool_registry.py` (tool list builder).
-- **Config** is nested dataclasses in `shannon/config.py`, loaded from `config.yaml` with `_merge_dataclass()` for partial overrides. `_merge_dataclass` performs type coercion (scalar→list, string→int/float) and warns on unknown keys. Config values are validated via `__post_init__` (clamping, range checks) — automatically re-run after merge. `_build_defaults()` uses a `_SKIP_VALIDATION` flag to construct defaults without triggering validation, which runs after YAML merge. Missing API key or missing Discord token (when enabled) raise `ValueError` at startup.
+- **Config** is nested dataclasses in `shannon/config.py`, loaded from `config.yaml` with `_merge_dataclass()` for partial overrides. `_merge_dataclass` performs type coercion (scalar→list, string→int/float), warns on unknown keys, and recursively visits all nested dataclass fields (even those absent from the YAML) to ensure `__post_init__` validators always run. Config values are validated via `__post_init__` (clamping, range checks) — automatically re-run after merge. `_build_defaults()` uses a `_SKIP_VALIDATION` flag to construct defaults without triggering validation, which runs after YAML merge. Missing API key or missing Discord token (when enabled) raise `ValueError` at startup.
 - **Anthropic native tools** — server-side tools (`web_search`, `web_fetch`, `code_execution`, `memory`) are declared in the tools list and handled by the API. Client-side tools (`computer`, `bash`, `str_replace_based_edit_tool`) are executed locally by tool executors in `shannon/tools/` and `shannon/computer/`.
 - **No ActionManager** — tool calls from the LLM are dispatched directly by `ToolDispatcher`. Confirmation is handled via the event bus: `ToolDispatcher` publishes `ToolConfirmationRequest`, a handler (CLI stdin by default) prompts the user and publishes `ToolConfirmationResponse`. Controlled by `require_confirmation` flags in each tool's config (default `True`). `--dangerously-skip-permissions` sets all flags to `False`.
-- **Memory** uses the Anthropic-hosted `memory` tool (type `memory_20250818`) — the API manages recall automatically. The client-side `MemoryBackend` validates paths with URL-decode + `..` fast-reject + symlink-resolved containment check against `_memories_root` (not the broader `base_dir`).
+- **Memory** uses the Anthropic-hosted `memory` tool (type `memory_20250818`) — the API manages recall automatically. Memory is fully server-side; there is no client-side executor.
 - Optional deps are lazy-imported with `try/except ImportError` — missing deps degrade gracefully with a warning.
 
 ## Anthropic API Features
@@ -35,7 +35,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 - **Prompt caching** — system prompt cached with `cache_control: ephemeral`
 - **Compaction** — conversation history compacted via `compact-2026-01-12` beta header when `llm.compaction: true`
 - **1M context** — `context-1m-2025-08-07` beta header included when `llm.enable_1m_context: true` (default)
-- **Message normalization** — `ClaudeClient._normalize_messages()` merges consecutive same-role messages to ensure strict user/assistant alternation (but never merges messages containing `tool_use` or `tool_result` blocks, to preserve pairing integrity)
+- **Message normalization** — `ClaudeClient._normalize_messages()` merges consecutive same-role messages to ensure strict user/assistant alternation (but never merges messages containing `tool_use` or `tool_result` blocks, to preserve pairing integrity; also skips merging when both messages have empty content to avoid API errors)
 - **Tool rate limits** — `web_search` and `web_fetch` have `max_uses: 3` to prevent runaway API costs
 
 ## Tool Set
@@ -82,11 +82,13 @@ Voice: **User speaks in VC** → VoiceManager captures per-user audio → silenc
 - **Message splitting** — responses over 2000 chars are split at newlines, then sentence boundaries (`. `, `! `, `? `), then spaces, then hard boundaries.
 - **Bot filtering** — messages from all bots are ignored, not just self.
 
+- **Token efficiency** — custom emoji context is only injected when `reaction_probability > 0`. Dynamic context (emoji, participants) is stripped from history entries to avoid compounding token waste. Images are cleared from messages after the first LLM call in a tool loop to prevent re-transmission.
+
 Config fields: `messaging.debounce_delay` (0-60, default 3.0), `messaging.reply_probability` (0-1, default 0.0), `messaging.reaction_probability` (0-1, default 0.0), `messaging.conversation_expiry` (0-3600, default 300.0), `messaging.max_context_messages` (>=0, default 20), `messaging.admin_ids` (list of Discord user ID strings, default []).
 
 ## Continue (Multi-Message) System
 
-The LLM can call the `continue` tool to send multiple messages in a row without waiting for user input. Each call emits the current text immediately, then the brain calls the LLM again. Capped at `memory.max_continues` (default 5). For chat platforms, the first message replies to the original; follow-ups are standalone messages in the channel.
+The LLM can call the `continue` tool to send multiple messages in a row without waiting for user input. Each call emits the current text immediately, then the brain calls the LLM again. Capped at `memory.max_continues` (default 5). The continue tool is handled entirely client-side — no `tool_result` is sent back to the API. For chat platforms, the first message replies to the original; follow-ups are standalone messages in the channel.
 
 When the tool loop exhausts its maximum iterations without completing, the brain makes a final tool-free LLM call to produce a coherent closing response.
 
@@ -109,11 +111,11 @@ Config fields: `tts.type` ("piper" or "coqui"), `tts.model` (model path for Pipe
 - **Onset clusters**: epenthetic vowel borrows from next semivowel (k before w→ku, t before w→tu). Sibilants get `i`, labials get `u`, others get `e`.
 - **Timing**: tone 5 (neutral) for unstressed syllables (shorter in model). Custom `pinyin_to_ids` pads only after tones and real punctuation, not spaces — words flow together within phrases.
 
-**Decryption chain:** Transport layer (XSalsa20-Poly1305 legacy or AEAD-AES256-GCM modern, auto-detected from negotiated mode) → DAVE E2EE layer (via `davey.DaveSession.decrypt`, transparent passthrough when DAVE is not active). Thread-safe: socket reader thread accesses shared buffers and opus decoder under a `threading.Lock`.
+**Decryption chain:** Transport layer (XSalsa20-Poly1305 legacy or AEAD-AES256-GCM modern, auto-detected from negotiated mode) → DAVE E2EE layer (via `davey.DaveSession.decrypt`, transparent passthrough when DAVE is not active). Thread-safe: socket reader thread accesses shared buffers, opus decoder, and SSRC-to-user mappings under a `threading.Lock`. The mute-during-playback flag uses `threading.Event` for atomic cross-thread signaling.
 
 **Config fields:** `messaging.voice.enabled` (default false), `messaging.voice.auto_join_channels` (list of channel IDs, empty = any), `messaging.voice.silence_threshold` (0.5-10.0, default 2.0), `messaging.voice.buffer_max_seconds` (5.0-60.0, default 30.0), `messaging.voice.voice_reply_probability` (0-1, default 1.0), `messaging.voice.mute_during_playback` (default true), `messaging.voice.volume` (0-2, default 1.0).
 
-**Dependencies:** `PyNaCl`, `davey`, system `libopus`. Install with `pip install 'shannon[voice]'`. AES-GCM mode also requires `cryptography` (usually already installed).
+**Dependencies:** `PyNaCl`, `davey`, `audioop-lts` (for Python 3.13+), system `libopus`. Install with `pip install 'shannon[voice]'`. AES-GCM mode also requires `cryptography` (usually already installed).
 
 ## Testing
 
@@ -142,8 +144,7 @@ shannon/
 │   └── types.py        # LLMMessage, LLMToolCall (frozen), LLMResponse (frozen)
 ├── tools/              # Client-side tool executors
 │   ├── bash_executor.py
-│   ├── text_editor_executor.py
-│   └── memory_backend.py
+│   └── text_editor_executor.py
 ├── computer/           # Computer-use tool executor
 │   ├── executor.py     # ComputerUseExecutor (pyautogui)
 │   └── screenshot.py
@@ -163,11 +164,11 @@ All credentials can be set in `config.yaml`:
 
 ## SSL on macOS
 
-Python from python.org may fail SSL verification (e.g., Discord connections). The app uses `truststore` to inject the macOS system cert store — install it with `pip install truststore`.
+Python from python.org may fail SSL verification (e.g., Discord connections). The app uses `truststore` to inject the macOS system cert store — install it with `pip install 'shannon[macos]'`.
 
 ## Autonomy & Rate Limits
 
-The autonomy loop fires LLM requests on idle timeout and screen changes. Vision captures 1 frame per minute; the brain keeps only the latest frame. Tune `autonomy.cooldown_seconds` and `vision.interval_seconds` in `config.yaml` to control API usage.
+The autonomy loop fires LLM requests on idle timeout and screen changes. Each trigger type has its own independent cooldown timer — firing `idle_timeout` does not suppress `screen_change` or vice versa. Vision captures 1 frame per minute; the brain keeps only the latest frame. Tune `autonomy.cooldown_seconds` and `vision.interval_seconds` in `config.yaml` to control API usage.
 
 ## Adding a New Tool
 
@@ -175,9 +176,9 @@ To add a client-side tool:
 
 1. Create an executor in `shannon/tools/your_executor.py` with an async `execute(params) -> str | dict` method
 2. Register it in `ToolDispatcher.__init__` and add a dispatch branch in `ToolDispatcher.dispatch`
-3. Add the tool definition to `ToolRegistry.build()` (user-defined format with `input_schema`, or Anthropic-hosted format with `type`)
+3. Add the tool definition to `ToolRegistry._build()` (user-defined format with `input_schema`, or Anthropic-hosted format with `type`) — tools are cached at init
 4. Add config fields to the relevant dataclass in `shannon/config.py` if needed
 5. Wire the executor in `app.py` (follow existing pattern with `try/except ImportError` for optional deps)
 6. Add optional dependency group in `pyproject.toml` if new deps are required
 
-To add a server-side tool: just add `{"type": "tool_type_string", "name": "tool_name"}` to `ToolRegistry.build()` — no executor needed.
+To add a server-side tool: just add `{"type": "tool_type_string", "name": "tool_name"}` to `ToolRegistry._build()` and add the name to `_SERVER_SIDE_TOOLS` in `tool_dispatch.py` — no executor needed.
