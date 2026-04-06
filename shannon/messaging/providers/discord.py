@@ -58,14 +58,16 @@ def split_message(text: str) -> list[str]:
         # Try to split on space
         cut = remaining.rfind(" ", 0, DISCORD_MAX_LENGTH)
         if cut != -1:
-            chunk = remaining[:cut + 1]
+            chunk = remaining[:cut].strip()
             if chunk:
                 chunks.append(chunk)
             remaining = remaining[cut + 1:]
             continue
 
         # Hard cut
-        chunks.append(remaining[:DISCORD_MAX_LENGTH])
+        chunk = remaining[:DISCORD_MAX_LENGTH].strip()
+        if chunk:
+            chunks.append(chunk)
         remaining = remaining[DISCORD_MAX_LENGTH:]
 
     return chunks
@@ -199,21 +201,28 @@ class DiscordProvider(MessagingProvider):
         if self._client is None or not text:
             return
 
-        discord_channel = self._client.get_channel(int(channel))
-        if discord_channel is None:
-            discord_channel = await self._client.fetch_channel(int(channel))
+        try:
+            discord_channel = self._client.get_channel(int(channel))
+            if discord_channel is None:
+                discord_channel = await self._client.fetch_channel(int(channel))
+        except Exception:
+            logger.exception("Failed to fetch channel %s", channel)
+            return
 
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):
-            if i == 0 and reply_to:
-                try:
-                    original = await discord_channel.fetch_message(int(reply_to))
-                    await original.reply(chunk)
-                except Exception:
-                    logger.exception("Failed to reply to message %s", reply_to)
+            try:
+                if i == 0 and reply_to:
+                    try:
+                        original = await discord_channel.fetch_message(int(reply_to))
+                        await original.reply(chunk)
+                    except Exception:
+                        logger.debug("Failed to reply to message %s, sending as standalone", reply_to)
+                        await discord_channel.send(chunk)
+                else:
                     await discord_channel.send(chunk)
-            else:
-                await discord_channel.send(chunk)
+            except Exception:
+                logger.exception("Failed to send message chunk %d to channel %s", i, channel)
 
     async def send_typing(self, channel: str) -> None:
         """Send a typing indicator to the Discord channel."""

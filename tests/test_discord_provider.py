@@ -84,6 +84,15 @@ class TestSplitMessageSentenceBoundary:
         assert all(len(c) <= 2000 for c in chunks)
 
 
+def test_split_message_space_split_no_trailing_whitespace():
+    """Space-split chunks must not have trailing whitespace."""
+    from shannon.messaging.providers.discord import split_message
+    long_word = "word " * 500  # 2500 chars
+    chunks = split_message(long_word)
+    for chunk in chunks:
+        assert chunk == chunk.strip(), f"Chunk has trailing whitespace: {chunk[-20:]!r}"
+
+
 def test_discord_provider_exposes_client():
     """DiscordProvider.client returns the internal discord.Client (or None before connect)."""
     from shannon.messaging.providers.discord import DiscordProvider

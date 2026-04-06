@@ -123,7 +123,7 @@ class Brain:
 
         # Build system suffix from emoji and participants
         suffix_parts: list[str] = []
-        if event.custom_emojis:
+        if event.custom_emojis and self._config.messaging.reaction_probability > 0:
             suffix_parts.append(event.custom_emojis)
         if event.participants:
             admin_ids = self._config.messaging.admin_ids

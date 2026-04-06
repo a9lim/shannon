@@ -509,6 +509,7 @@ async def test_brain_dynamic_context_not_in_system_prompt():
     dispatcher = FakeDispatcher()
     registry = FakeRegistry()
     config = ShannonConfig()
+    config.messaging.reaction_probability = 0.5  # enable emoji inclusion
     brain = Brain(bus=bus, claude=fake_claude, dispatcher=dispatcher, registry=registry, config=config)
 
     chat_responses: list[ChatResponse] = []
