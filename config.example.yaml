@@ -27,9 +27,12 @@ tools:
 
 tts:
   type: piper
-  model: en_US-lessac-medium
+  model: en_US-lessac-high
   rate: 1.0
   speaker: ""             # Multi-speaker model speaker ID (Coqui only)
+  noise_scale: 1.0        # Generator noise — lower = smoother pitch (0-1)
+  noise_w_scale: 1.0      # Phoneme width noise — lower = more uniform timing (0-1)
+  sentence_silence: 0.25  # Silence between sentences in seconds
 
 stt:
   type: whisper

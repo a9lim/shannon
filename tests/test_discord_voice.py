@@ -222,29 +222,32 @@ def test_parse_rtp_header():
     payload = b"\xDE\xAD\xBE\xEF"
     packet = header + payload
 
-    seq, ts, ssrc, data = parse_rtp_header(packet)
+    seq, ts, ssrc, aad_len, ext_data_len = parse_rtp_header(packet)
     assert seq == 42
     assert ts == 12345
     assert ssrc == 99
-    assert data == payload
+    assert aad_len == 12  # no extension
+    assert ext_data_len == 0
 
 
 def test_parse_rtp_header_with_extension():
-    """RTP packets with header extension should skip the extension bytes."""
+    """In _rtpsize mode, AAD includes extension header but not extension data."""
     from shannon.messaging.providers.discord_voice import parse_rtp_header
 
     # Extension bit set (0x90 instead of 0x80)
     header = struct.pack(">BBHII", 0x90, 120, 1, 100, 50)
     # Extension header: profile=0xBEDE, length=1 (1 * 4 bytes of extension data)
     ext_header = struct.pack(">HH", 0xBEDE, 1)
-    ext_data = b"\x00\x00\x00\x00"
+    # Extension data (encrypted in _rtpsize mode, so just opaque bytes here)
+    ext_data = b"\xAA\xBB\xCC\xDD"
     payload = b"\xCA\xFE"
     packet = header + ext_header + ext_data + payload
 
-    seq, ts, ssrc, data = parse_rtp_header(packet)
+    seq, ts, ssrc, aad_len, ext_data_len = parse_rtp_header(packet)
     assert seq == 1
     assert ssrc == 50
-    assert data == payload
+    assert aad_len == 16  # 12 (fixed) + 4 (ext header only, NOT ext data)
+    assert ext_data_len == 4  # 1 word = 4 bytes of extension data to strip
 
 
 def test_parse_rtp_header_too_short():
@@ -661,6 +664,7 @@ def test_dave_decrypt_calls_session():
 
     fake_dave = MagicMock()
     fake_dave.ready = True
+    fake_dave.can_passthrough = MagicMock(return_value=False)
     fake_dave.decrypt = MagicMock(return_value=b"\xCA\xFE")
 
     fake_vc = FakeVoiceClient()
@@ -675,12 +679,13 @@ def test_dave_decrypt_calls_session():
     fake_dave.decrypt.assert_called_once_with(123, davey.MediaType.audio, b"\x00\x01\x02")
 
 
-def test_dave_decrypt_returns_none_on_failure():
-    """DAVE decrypt failure returns None."""
+def test_dave_decrypt_passes_through_on_failure():
+    """DAVE decrypt failure passes data through for opus decode to validate."""
     vm, bus, client = _make_voice_manager(enabled=True)
 
     fake_dave = MagicMock()
     fake_dave.ready = True
+    fake_dave.can_passthrough = MagicMock(return_value=False)
     fake_dave.decrypt = MagicMock(return_value=None)
 
     fake_vc = FakeVoiceClient()
@@ -688,8 +693,9 @@ def test_dave_decrypt_returns_none_on_failure():
     vm._voice_clients["guild_1"] = fake_vc
     vm._ssrc_to_user[99] = ("123", "Alice")
 
-    result = vm._dave_decrypt(99, b"\x00\x01", user_info=("123", "Alice"))
-    assert result is None
+    data = b"\x00\x01"
+    result = vm._dave_decrypt(99, data, user_info=("123", "Alice"))
+    assert result == data  # passed through for opus to validate
 
 
 # ---------------------------------------------------------------------------

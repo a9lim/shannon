@@ -96,8 +96,11 @@ class TestOtherConfigDefaults:
     def test_tts_defaults(self):
         cfg = TTSConfig()
         assert cfg.type == "piper"
-        assert cfg.model == "en_US-lessac-medium"
+        assert cfg.model == "en_US-lessac-high"
         assert cfg.rate == 1.0
+        assert cfg.noise_scale == 1.0
+        assert cfg.noise_w_scale == 1.0
+        assert cfg.sentence_silence == 0.25
 
     def test_stt_defaults(self):
         cfg = STTConfig()

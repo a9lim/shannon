@@ -45,9 +45,12 @@ class LLMConfig:
 @dataclass
 class TTSConfig:
     type: str = "piper"
-    model: str = "en_US-lessac-medium"
+    model: str = "en_US-lessac-high"
     rate: float = 1.0
     speaker: str = ""
+    noise_scale: float = 1.0
+    noise_w_scale: float = 1.0
+    sentence_silence: float = 0.25
 
 
 @dataclass

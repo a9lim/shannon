@@ -48,10 +48,23 @@ def _resolve_model_path(model_path: str) -> str:
 class PiperProvider(TTSProvider):
     """TTS provider backed by piper-tts (lazy-loaded)."""
 
-    def __init__(self, model_path: str, config_path: str | None = None, speaker: str = "") -> None:
+    def __init__(
+        self,
+        model_path: str,
+        config_path: str | None = None,
+        speaker: str = "",
+        rate: float = 1.0,
+        noise_scale: float = 0.333,
+        noise_w_scale: float = 0.333,
+        sentence_silence: float = 0.3,
+    ) -> None:
         self._model_path = _resolve_model_path(model_path)
         self._config_path = config_path
         self._speaker = speaker
+        self._rate = rate
+        self._noise_scale = noise_scale
+        self._noise_w_scale = noise_w_scale
+        self._sentence_silence = sentence_silence
         self._voice: object | None = None  # piper.voice.PiperVoice, loaded lazily
         self._syn_config: object | None = None  # piper.config.SynthesisConfig
         self._is_pinyin: bool = False  # set after load
@@ -99,7 +112,12 @@ class PiperProvider(TTSProvider):
                     "Speaker %r not found in model; available: %s",
                     self._speaker, ", ".join(sid_map.keys()),
                 )
-        self._syn_config = SynthesisConfig(speaker_id=speaker_id) if speaker_id is not None else None
+        self._syn_config = SynthesisConfig(
+            speaker_id=speaker_id,
+            length_scale=1.0 / self._rate if self._rate != 1.0 else None,
+            noise_scale=self._noise_scale,
+            noise_w_scale=self._noise_w_scale,
+        )
 
     # ------------------------------------------------------------------
     # TTSProvider interface
@@ -127,8 +145,16 @@ class PiperProvider(TTSProvider):
         if not chunks:
             return AudioChunk(data=b"", sample_rate=sample_rate, channels=1)
 
-        audio = np.concatenate([c.audio_float_array for c in chunks])
-        audio = np.clip(audio, -1.0, 1.0)
+        # Interleave silence between sentence chunks
+        silence_samples = int(sample_rate * self._sentence_silence)
+        silence = np.zeros(silence_samples, dtype=np.float32)
+        parts: list[np.ndarray] = []
+        for i, c in enumerate(chunks):
+            if i > 0 and silence_samples > 0:
+                parts.append(silence)
+            parts.append(c.audio_float_array)
+
+        audio = np.concatenate(parts)
         pcm = (audio * 32767).astype(np.int16)
         return AudioChunk(data=pcm.tobytes(), sample_rate=sample_rate, channels=1)
 
@@ -192,9 +218,16 @@ class PiperProvider(TTSProvider):
 
         result = []
         sample_rate = self._voice.config.sample_rate  # type: ignore[attr-defined]
-        for chunk in self._voice.synthesize(text, self._syn_config):  # type: ignore[attr-defined]
-            audio = np.clip(chunk.audio_float_array, -1.0, 1.0)
-            pcm = (audio * 32767).astype(np.int16)
+        silence_samples = int(sample_rate * self._sentence_silence)
+        for i, chunk in enumerate(self._voice.synthesize(text, self._syn_config)):  # type: ignore[attr-defined]
+            if i > 0 and silence_samples > 0:
+                silence = np.zeros(silence_samples, dtype=np.int16)
+                result.append(AudioChunk(
+                    data=silence.tobytes(),
+                    sample_rate=sample_rate,
+                    channels=1,
+                ))
+            pcm = (chunk.audio_float_array * 32767).astype(np.int16)
             result.append(AudioChunk(
                 data=pcm.tobytes(),
                 sample_rate=sample_rate,

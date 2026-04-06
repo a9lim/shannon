@@ -12,6 +12,7 @@ import time
 import wave
 from typing import TYPE_CHECKING, Any
 
+import discord
 import nacl.secret
 import nacl.utils
 
@@ -28,33 +29,50 @@ logger = logging.getLogger(__name__)
 # RTP header parsing
 # ---------------------------------------------------------------------------
 
-def parse_rtp_header(packet: bytes) -> tuple[int, int, int, bytes] | None:
-    """Parse RTP header, return (sequence, timestamp, ssrc, payload) or None.
+def parse_rtp_header(packet: bytes) -> tuple[int, int, int, int, int] | None:
+    """Parse RTP header for ``_rtpsize`` modes.
 
-    Handles the optional header extension (X bit). Returns the payload bytes
-    after the RTP header (and extension if present).
+    Returns ``(seq, ts, ssrc, aad_len, ext_data_len)``.
+
+    Per RFC 9605, ``_rtpsize`` modes authenticate the fixed header, CSRC list,
+    and the extension *header* (profile + length, 4 bytes) as AAD.  The
+    extension *data* is encrypted together with the audio payload.
+
+    * ``aad_len`` — bytes to use as AEAD AAD (everything before the ciphertext).
+    * ``ext_data_len`` — bytes of extension data inside the ciphertext that
+      must be stripped after decryption to get the raw audio frame.
     """
     if len(packet) < 12:
         return None
 
     first_byte = packet[0]
-    has_extension = bool(first_byte & 0x10)
+    # RTP version must be 2 (bits 6-7)
+    if (first_byte >> 6) != 2:
+        return None
+    # Filter RTCP packets (PT 200-204 in byte 1) — they share version=2 with RTP
+    if packet[1] in (200, 201, 202, 203, 204):
+        return None
+
     cc = first_byte & 0x0F  # CSRC count
+    has_extension = bool(first_byte & 0x10)
 
     seq, ts, ssrc = struct.unpack_from(">HII", packet, 2)
 
-    offset = 12 + cc * 4  # skip CSRC list
-
+    # AAD = fixed header + CSRC list + extension header (if present).
+    # Extension DATA is encrypted, so it is NOT part of the AAD.
+    aad_len = 12 + cc * 4
+    ext_data_len = 0
     if has_extension:
-        if len(packet) < offset + 4:
+        if len(packet) < aad_len + 4:
             return None
-        ext_length = struct.unpack_from(">HH", packet, offset)[1]
-        offset += 4 + ext_length * 4
+        ext_words = struct.unpack_from(">HH", packet, aad_len)[1]
+        ext_data_len = ext_words * 4
+        aad_len += 4  # include extension header (profile + length) in AAD
 
-    if offset > len(packet):
+    if aad_len > len(packet):
         return None
 
-    return seq, ts, ssrc, packet[offset:]
+    return seq, ts, ssrc, aad_len, ext_data_len
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +156,7 @@ class UserAudioBuffer:
 FRAME_SIZE = 3840  # 20ms of 48kHz stereo 16-bit PCM
 
 
-class ChunkAudioSource:
+class ChunkAudioSource(discord.AudioSource):
     """discord.AudioSource that plays an AudioChunk, resampled to 48kHz stereo.
 
     discord.py calls read() in a separate thread to get 20ms PCM frames.
@@ -214,6 +232,9 @@ class VoiceManager:
         self._muted = threading.Event()
         self._opus_decoder = None
         self._lock = threading.Lock()  # Protects _user_buffers, _opus_decoder, _ssrc_to_user from socket thread
+        self._packet_count = 0
+        self._unknown_ssrcs: set[int] = set()  # SSRCs seen but not mapped
+        self._hooked_ws: set[int] = set()  # id() of websockets we've hooked
 
     async def start(self) -> None:
         from shannon.events import VoiceOutput
@@ -270,7 +291,19 @@ class VoiceManager:
         try:
             vc = await channel.connect()
             self._voice_clients[guild_id] = vc
-            logger.info("Joined voice channel %s in guild %s", channel_id, guild_id)
+            mode = getattr(vc._connection, "mode", "unknown")
+            logger.info("Joined voice channel %s in guild %s (encryption: %s)", channel_id, guild_id, mode)
+
+            # Enable DAVE passthrough so we can receive audio while MLS key
+            # exchange completes (or from peers not using DAVE).
+            dave_session = getattr(vc._connection, "dave_session", None)
+            if dave_session is not None:
+                try:
+                    dave_session.set_passthrough_mode(True, 120)
+                    logger.info("DAVE passthrough enabled (120s window)")
+                except Exception:
+                    logger.debug("Failed to set DAVE passthrough", exc_info=True)
+
             self._register_audio_listener(vc)
         except Exception:
             logger.exception("Failed to connect to voice channel %s", channel_id)
@@ -299,42 +332,60 @@ class VoiceManager:
                 del self._ssrc_to_user[old_ssrc]
                 self._user_buffers.pop(old_ssrc, None)
             self._ssrc_to_user[ssrc] = (user_id, display_name)
-        logger.debug("SSRC %d -> user %s (%s)", ssrc, user_id, display_name)
+        logger.info("SSRC %d -> user %s (%s)", ssrc, user_id, display_name)
 
     def _register_audio_listener(self, vc: Any) -> None:
         """Register a socket listener on the VoiceClient to receive raw UDP packets."""
         try:
             vc._connection.add_socket_listener(self._on_udp_packet)
+            logger.info("Registered UDP socket listener on voice connection")
         except Exception:
             logger.exception("Failed to register socket listener")
-        self._hook_speaking_events(vc)
+        self._hook_voice_ws(vc)
 
-    def _hook_speaking_events(self, vc: Any) -> None:
-        """Monkey-patch the voice websocket to intercept SPEAKING events."""
+    def _hook_voice_ws(self, vc: Any) -> None:
+        """Monkey-patch the voice websocket to intercept SPEAKING and CLIENT_CONNECT events."""
         try:
             ws = vc.ws
             if ws is None:
+                logger.warning("Voice websocket is None, cannot hook speaking events")
                 return
             original_received = ws.received_message
 
+            def _resolve_display_name(user_id: str) -> str:
+                if hasattr(vc, "channel") and vc.channel:
+                    for m in vc.channel.members:
+                        if str(m.id) == str(user_id):
+                            return m.display_name
+                return str(user_id)
+
             async def patched_received(msg: Any) -> None:
-                if isinstance(msg, dict) and msg.get("op") == 5:
+                if isinstance(msg, dict):
+                    op = msg.get("op")
                     data = msg.get("d", {})
-                    user_id = data.get("user_id", "")
-                    ssrc = data.get("ssrc", 0)
-                    if user_id and ssrc:
-                        display_name = str(user_id)
-                        if hasattr(vc, "channel") and vc.channel:
-                            for m in vc.channel.members:
-                                if str(m.id) == str(user_id):
-                                    display_name = m.display_name
-                                    break
-                        self.handle_speaking_update(str(user_id), ssrc, display_name)
+                    # op 5 = SPEAKING — maps user_id to ssrc
+                    if op == 5:
+                        user_id = data.get("user_id", "")
+                        ssrc = data.get("ssrc", 0)
+                        if user_id and ssrc:
+                            self.handle_speaking_update(
+                                str(user_id), ssrc, _resolve_display_name(str(user_id)),
+                            )
+                    # op 12 = CLIENT_CONNECT — also carries audio_ssrc
+                    elif op == 12:
+                        user_id = data.get("user_id", "")
+                        ssrc = data.get("audio_ssrc", 0)
+                        if user_id and ssrc:
+                            self.handle_speaking_update(
+                                str(user_id), ssrc, _resolve_display_name(str(user_id)),
+                            )
                 await original_received(msg)
 
             ws.received_message = patched_received
+            self._hooked_ws.add(id(ws))
+            logger.info("Hooked voice websocket for SPEAKING/CLIENT_CONNECT events")
         except Exception:
-            logger.debug("Failed to hook speaking events", exc_info=True)
+            logger.warning("Failed to hook voice websocket events", exc_info=True)
 
     def _unregister_audio_listener(self, vc: Any) -> None:
         """Remove the socket listener."""
@@ -357,16 +408,34 @@ class VoiceManager:
         if parsed is None:
             return
 
-        seq, ts, ssrc, payload = parsed
+        seq, ts, ssrc, aad_len, ext_data_len = parsed
+
+        self._packet_count += 1
+        if self._packet_count == 1:
+            logger.info("Receiving UDP voice packets (first packet, ssrc=%d)", ssrc)
 
         with self._lock:
             if ssrc not in self._ssrc_to_user:
+                if ssrc not in self._unknown_ssrcs:
+                    self._unknown_ssrcs.add(ssrc)
+                    logger.debug("Unmapped SSRC %d (known: %s)", ssrc, list(self._ssrc_to_user.keys()))
                 return
             user_info = self._ssrc_to_user[ssrc]
 
-        decrypted = self._decrypt_payload(payload, data[:12])
+        # In _rtpsize modes (RFC 9605): AAD = fixed header + CSRC + extension header.
+        # Extension DATA is encrypted as part of the payload.
+        header = data[:aad_len]
+        payload = data[aad_len:]
+        decrypted = self._decrypt_payload(payload, header)
         if decrypted is None:
             return
+
+        # Strip encrypted extension data that was part of the ciphertext.
+        # After decryption it's the first ext_data_len bytes.
+        if ext_data_len > 0:
+            if len(decrypted) <= ext_data_len:
+                return
+            decrypted = decrypted[ext_data_len:]
 
         # DAVE E2EE: second decryption layer if active
         decrypted = self._dave_decrypt(ssrc, decrypted, user_info)
@@ -389,26 +458,88 @@ class VoiceManager:
     def _decrypt_payload(self, payload: bytes, header: bytes) -> bytes | None:
         """Decrypt an RTP payload using the session secret key.
 
-        Supports both XSalsa20-Poly1305 (legacy) and AEAD-AES256-GCM (modern)
-        encryption modes, selected by the voice connection's negotiated mode.
+        Supports:
+        - aead_xchacha20_poly1305_rtpsize (discord.py 2.7+ preferred mode)
+        - aead_aes256_gcm / aead_aes256_gcm_rtpsize
+        - xsalsa20_poly1305 / xsalsa20_poly1305_suffix / xsalsa20_poly1305_lite (legacy)
         """
         for vc in self._voice_clients.values():
             try:
                 secret_key = bytes(vc._connection.secret_key)
-                if not secret_key:
-                    continue
-                mode = getattr(vc._connection, "mode", "xsalsa20_poly1305")
-                if "aead_aes256_gcm" in mode:
-                    return self._decrypt_aead_gcm(payload, header, secret_key)
-                else:
-                    # XSalsa20-Poly1305 (legacy modes)
-                    nonce = header + b"\x00" * (24 - len(header))
-                    box = nacl.secret.SecretBox(secret_key)
-                    return box.decrypt(payload, nonce)
             except Exception:
-                logger.debug("Decryption failed for packet", exc_info=True)
-                continue  # Try next voice client
+                continue
+            if not secret_key:
+                continue
+            mode = getattr(vc._connection, "mode", "xsalsa20_poly1305")
+            if "xchacha20" in mode:
+                return self._decrypt_xchacha20_rtpsize(payload, header, secret_key)
+            elif "aead_aes256_gcm" in mode:
+                return self._decrypt_aead_gcm(payload, header, secret_key)
+            elif "lite" in mode:
+                return self._decrypt_xsalsa20_lite(payload, secret_key)
+            elif "suffix" in mode:
+                return self._decrypt_xsalsa20_suffix(payload, secret_key)
+            else:
+                # xsalsa20_poly1305 (plain) — nonce is RTP header zero-padded to 24 bytes
+                nonce = header + b"\x00" * (24 - len(header))
+                box = nacl.secret.SecretBox(secret_key)
+                try:
+                    return box.decrypt(payload, nonce)
+                except Exception:
+                    logger.debug("XSalsa20 decryption failed", exc_info=True)
+                    return None
         return None
+
+    @staticmethod
+    def _decrypt_xchacha20_rtpsize(payload: bytes, header: bytes, secret_key: bytes) -> bytes | None:
+        """Decrypt using XChaCha20-Poly1305 AEAD (discord.py 2.7+ preferred mode).
+
+        Per RFC 9605, in ``_rtpsize`` modes the AAD is the fixed RTP header +
+        CSRC list + extension *header* (4 bytes).  The extension *data* is
+        encrypted as part of the ciphertext.  The 4-byte nonce suffix is
+        appended after the ciphertext.
+        """
+        if len(payload) < 4:
+            return None
+        nonce_suffix = payload[-4:]
+        ciphertext = payload[:-4]
+        nonce = bytearray(24)
+        nonce[:4] = nonce_suffix
+        try:
+            box = nacl.secret.Aead(secret_key)
+            return box.decrypt(bytes(ciphertext), aad=bytes(header), nonce=bytes(nonce))
+        except Exception:
+            logger.debug("XChaCha20 decryption failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _decrypt_xsalsa20_lite(payload: bytes, secret_key: bytes) -> bytes | None:
+        """Decrypt using XSalsa20-Poly1305 lite mode (4-byte nonce suffix)."""
+        if len(payload) < 4:
+            return None
+        nonce_suffix = payload[-4:]
+        ciphertext = payload[:-4]
+        nonce = nonce_suffix + b"\x00" * 20
+        try:
+            box = nacl.secret.SecretBox(secret_key)
+            return box.decrypt(ciphertext, nonce)
+        except Exception:
+            logger.debug("XSalsa20 lite decryption failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _decrypt_xsalsa20_suffix(payload: bytes, secret_key: bytes) -> bytes | None:
+        """Decrypt using XSalsa20-Poly1305 suffix mode (24-byte nonce suffix)."""
+        if len(payload) < 24:
+            return None
+        nonce = payload[-24:]
+        ciphertext = payload[:-24]
+        try:
+            box = nacl.secret.SecretBox(secret_key)
+            return box.decrypt(ciphertext, nonce)
+        except Exception:
+            logger.debug("XSalsa20 suffix decryption failed", exc_info=True)
+            return None
 
     @staticmethod
     def _decrypt_aead_gcm(payload: bytes, header: bytes, secret_key: bytes) -> bytes | None:
@@ -447,23 +578,37 @@ class VoiceManager:
         """
         for vc in self._voice_clients.values():
             dave_session = getattr(vc._connection, "dave_session", None)
-            if dave_session is None or not dave_session.ready:
+            if dave_session is None:
                 return data  # No DAVE — pass through
 
             if user_info is None:
                 return None
 
             user_id_int = int(user_info[0])
+
+            # Check if this user is in passthrough mode (during transitions)
+            try:
+                if dave_session.can_passthrough(user_id_int):
+                    return data
+            except Exception:
+                pass
+
+            if not dave_session.ready:
+                return data  # Session not ready yet — pass through
+
             try:
                 import davey
                 result = dave_session.decrypt(user_id_int, davey.MediaType.audio, data)
-                if result is None:
-                    logger.debug("DAVE decrypt returned None for SSRC %d", ssrc)
-                    return None
-                return bytes(result)
+                if result is not None:
+                    return bytes(result)
             except Exception:
-                logger.debug("DAVE decryption failed for SSRC %d", ssrc, exc_info=True)
-                return None
+                pass
+
+            # DAVE decrypt failed or returned None — the data may be
+            # unencrypted opus (peer not using DAVE, key exchange pending,
+            # or transition in progress).  Pass through and let opus decode
+            # be the final validator.
+            return data
         return data  # No voice clients — pass through
 
     def _decode_opus(self, opus_data: bytes) -> bytes | None:
@@ -485,11 +630,24 @@ class VoiceManager:
                 return None
 
     async def _silence_monitor(self) -> None:
-        """Background task: poll buffers for silence gaps."""
+        """Background task: poll buffers for silence gaps and re-hook on reconnect."""
         try:
+            rehook_counter = 0
             while True:
                 await asyncio.sleep(0.2)
                 await self._check_silence_and_transcribe()
+                # Periodically check if voice ws was replaced (reconnect) — re-hook
+                rehook_counter += 1
+                if rehook_counter >= 25:  # Every 5 seconds
+                    rehook_counter = 0
+                    for vc in self._voice_clients.values():
+                        try:
+                            ws = vc.ws
+                            if ws is not None and id(ws) not in self._hooked_ws:
+                                logger.info("Voice websocket changed (reconnect?), re-hooking")
+                                self._hook_voice_ws(vc)
+                        except Exception:
+                            pass
         except asyncio.CancelledError:
             pass
 
@@ -590,4 +748,8 @@ class VoiceManager:
             if error:
                 logger.warning("Error during voice playback: %s", error)
 
-        target_vc.play(source, after=after_play)
+        try:
+            target_vc.play(source, after=after_play)
+        except Exception:
+            self._muted.clear()
+            logger.exception("Failed to start voice playback")
