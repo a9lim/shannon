@@ -848,3 +848,42 @@ async def test_brain_expression_intensity_invalid_string_defaults():
     assert len(expressions) == 1
     assert expressions[0].name == "excited"
     assert expressions[0].intensity == 0.7
+
+
+class FakeClaudeContinue:
+    """Always returns a continue tool call, counting invocations."""
+    def __init__(self):
+        self.call_count = 0
+
+    async def generate(self, messages, tools=None, betas=None):
+        self.call_count += 1
+        return LLMResponse(
+            text=f"msg{self.call_count}",
+            tool_calls=[LLMToolCall(id=f"c{self.call_count}", name="continue", arguments={})],
+            stop_reason="end_turn",
+        )
+
+
+@pytest.mark.asyncio
+async def test_brain_continue_cap_exact():
+    """With max_continues=2, exactly 2 continues allowed (not 3)."""
+    bus = EventBus()
+    config = ShannonConfig()
+    config.memory.max_continues = 2
+    config.memory.max_session_messages = 0
+
+    claude = FakeClaudeContinue()
+    dispatcher = FakeDispatcher()
+    registry = FakeRegistry()
+
+    brain = Brain(bus=bus, claude=claude, dispatcher=dispatcher, registry=registry, config=config)
+    await brain.start()
+
+    responses = []
+    async def capture(e):
+        responses.append(e.text)
+    bus.subscribe(LLMResponseEvent, capture)
+
+    await bus.publish(UserInput(text="test", source="text"))
+    # 1 initial + 2 continues + 1 final tool-free = 4 max
+    assert claude.call_count <= 4

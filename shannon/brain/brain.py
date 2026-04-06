@@ -303,7 +303,7 @@ class Brain:
 
                     if self._dispatcher.is_continue(tool_call.name):
                         wants_continue = True
-                        tool_results.append({"id": tool_call.id, "content": "ok"})
+                        continue
                     elif self._dispatcher.is_expression(tool_call.name):
                         # Parse expression args and emit event
                         expr_name = tool_call.arguments.get("name", "neutral")
@@ -320,12 +320,7 @@ class Brain:
                         await self._bus.publish(
                             ExpressionChange(name=expr_name, intensity=intensity)
                         )
-                        try:
-                            result = await self._dispatcher.dispatch(tool_call)
-                        except Exception:
-                            logger.exception("Tool executor raised for %s (id=%s)", tool_call.name, tool_call.id)
-                            result = f"Error: tool '{tool_call.name}' raised an exception"
-                        tool_results.append({"id": tool_call.id, "content": _tool_content(result)})
+                        tool_results.append({"id": tool_call.id, "content": "ok"})
                     else:
                         try:
                             result = await self._dispatcher.dispatch(tool_call)
@@ -376,7 +371,7 @@ class Brain:
                             messages.append(
                                 LLMMessage(role="user", content="", tool_results=tool_results)
                             )
-                    else:
+                    elif llm_response.text:
                         messages.append(
                             LLMMessage(role="assistant", content=llm_response.text)
                         )
@@ -412,7 +407,7 @@ class Brain:
                 # Enforce continue cap
                 if wants_continue:
                     continue_count += 1
-                    if continue_count > max_continues:
+                    if continue_count >= max_continues:
                         logger.info("Continue cap reached (%d/%d)", continue_count, max_continues)
                         break
 
