@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator
 
-import numpy as np
-
 from shannon.output.providers.tts.base import AudioChunk, TTSProvider
 
 if TYPE_CHECKING:
@@ -55,6 +53,8 @@ class CoquiProvider(TTSProvider):
 
     def _synthesize_sync(self, text: str) -> AudioChunk:
         """Synchronous synthesis — runs in thread pool."""
+        import numpy as np
+
         wav = self._tts.tts(text=text, speaker=self._speaker)  # type: ignore[attr-defined]
         audio = np.array(wav, dtype=np.float32)
         audio = np.clip(audio, -1.0, 1.0)
