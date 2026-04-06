@@ -5,7 +5,7 @@ description = "AI VTuber powered by Claude"
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0",
-    "anthropic>=0.40.0",
+    "anthropic>=0.52.0",
 ]
 
 [project.optional-dependencies]
@@ -24,14 +24,14 @@ tts = [
 coqui = [
     "coqui-tts>=0.24.0",
     "torchaudio>=2.0.0",
-    "torchcodec>=0.1.0",
     "transformers>=4.47,<5",
 ]
 stt = ["faster-whisper>=1.0.0"]
 vtuber = ["websockets>=12.0"]
 messaging = ["discord.py>=2.3.0"]
-voice = ["PyNaCl>=1.5.0", "davey>=0.1.0"]
-all = ["shannon[computer,vision,tts,coqui,stt,vtuber,messaging,voice]"]
+voice = ["PyNaCl>=1.5.0", "davey>=0.1.0", "audioop-lts>=0.2.1"]
+macos = ["truststore>=0.9.0"]
+all = ["shannon[computer,vision,tts,coqui,stt,vtuber,messaging,voice,macos]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
