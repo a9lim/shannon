@@ -91,6 +91,11 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         except ImportError:
             logger.warning("pyautogui not installed — computer use disabled")
 
+    # Memory backend
+    from shannon.tools.memory_backend import MemoryBackend
+
+    memory_backend = MemoryBackend(config.memory.dir)
+
     # ------------------------------------------------------------------
     # Dispatcher and registry
     # ------------------------------------------------------------------
@@ -101,6 +106,7 @@ async def run(config: "ShannonConfig", speech_mode: bool = False) -> None:
         computer_executor=computer_executor,
         bash_executor=bash_executor,
         text_editor_executor=text_editor_executor,
+        memory_backend=memory_backend,
         tools_config=config.tools,
         bus=bus,
     )

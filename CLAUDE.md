@@ -25,7 +25,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 - **Config** is nested dataclasses in `shannon/config.py`, loaded from `config.yaml` with `_merge_dataclass()` for partial overrides. `_merge_dataclass` performs type coercion (scalar→list, string→int/float), warns on unknown keys, and recursively visits all nested dataclass fields (even those absent from the YAML) to ensure `__post_init__` validators always run. Config values are validated via `__post_init__` (clamping, range checks) — automatically re-run after merge. `_build_defaults()` uses a `_SKIP_VALIDATION` flag to construct defaults without triggering validation, which runs after YAML merge. Missing API key or missing Discord token (when enabled) raise `ValueError` at startup.
 - **Anthropic native tools** — server-side tools (`web_search`, `web_fetch`, `code_execution`, `memory`) are declared in the tools list and handled by the API. Client-side tools (`computer`, `bash`, `str_replace_based_edit_tool`) are executed locally by tool executors in `shannon/tools/` and `shannon/computer/`.
 - **No ActionManager** — tool calls from the LLM are dispatched directly by `ToolDispatcher`. Confirmation is handled via the event bus: `ToolDispatcher` publishes `ToolConfirmationRequest`, a handler (CLI stdin by default) prompts the user and publishes `ToolConfirmationResponse`. Controlled by `require_confirmation` flags in each tool's config (default `True`). `--dangerously-skip-permissions` sets all flags to `False`.
-- **Memory** uses the Anthropic-hosted `memory` tool (type `memory_20250818`) — the API manages recall automatically. Memory is fully server-side; there is no client-side executor.
+- **Memory** uses the `memory` tool (type `memory_20250818`) — despite the Anthropic-hosted type name, this is a **client-side** tool. The API returns `tool_use` blocks that require `tool_result` responses. `MemoryBackend` (`shannon/tools/memory_backend.py`) executes file operations (view, create, str_replace, insert, delete, rename) against a local directory (`config.memory.dir`/memories/).
 - Optional deps are lazy-imported with `try/except ImportError` — missing deps degrade gracefully with a warning.
 
 ## Anthropic API Features
@@ -48,7 +48,7 @@ All modules communicate through a central async `EventBus` (pub/sub, `shannon/bu
 | `bash` | `bash_20250124` | client (conditional) |
 | `str_replace_based_edit_tool` | `text_editor_20250728` | client (conditional) |
 | `code_execution` | `code_execution_20260120` | server |
-| `memory` | `memory_20250818` | server |
+| `memory` | `memory_20250818` | client |
 | `web_search` | `web_search_20260209` | server |
 | `web_fetch` | `web_fetch_20260209` | server |
 | `set_expression` | user-defined | client |

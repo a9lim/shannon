@@ -59,8 +59,29 @@ async def test_dispatch_text_editor_routes_to_text_editor_executor():
     assert result == "edit result"
 
 
-def test_memory_is_server_side():
-    assert ToolDispatcher.is_server_side("memory") is True
+def test_memory_is_not_server_side():
+    assert ToolDispatcher.is_server_side("memory") is False
+
+
+async def test_dispatch_memory_routes_to_memory_backend():
+    """memory tool is routed to memory_backend.execute."""
+    memory = MagicMock()
+    memory.execute = MagicMock(return_value="File created successfully at: /memories/test.md")
+    dispatcher = ToolDispatcher(memory_backend=memory)
+
+    result = await dispatcher.dispatch(_make_call("memory", {"command": "create", "path": "/memories/test.md"}))
+
+    memory.execute.assert_called_once_with({"command": "create", "path": "/memories/test.md"})
+    assert "File created successfully" in result
+
+
+async def test_dispatch_memory_missing_returns_error():
+    """memory tool without backend returns error."""
+    dispatcher = _make_dispatcher()
+
+    result = await dispatcher.dispatch(_make_call("memory", {"command": "view"}))
+
+    assert "not available" in result
 
 
 async def test_dispatch_computer_routes_to_computer_executor():
